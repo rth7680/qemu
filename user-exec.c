@@ -317,8 +317,8 @@ int cpu_signal_handler(int host_signum, void *pinfo,
 {
     siginfo_t *info = pinfo;
     struct ucontext *uc = puc;
-    uint32_t *pc = uc->uc_mcontext.sc_pc;
-    uint32_t insn = *pc;
+    unsigned long pc = uc->uc_mcontext.sc_pc;
+    uint32_t insn = *(uint32_t *)pc;
     int is_write = 0;
 
     /* XXX: need kernel patch to get write flag faster */
