@@ -1,0 +1,555 @@
+/*
+ *  Synergistic Processor Unit (SPU) emulation
+ *  CPU Translation.
+ *
+ *  Copyright (c) 2011  Richard Henderson
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "config.h"
+#include "cpu.h"
+#include "disas.h"
+#include "host-utils.h"
+#include "tcg-op.h"
+#include "qemu-common.h"
+
+#include "helper.h"
+#define GEN_HELPER 1
+#include "helper.h"
+
+typedef struct {
+    struct TranslationBlock *tb;
+    uint32_t pc;
+    uint32_t lslr;
+} DisasContext;
+
+/* Return values from translate_one, indicating the state of the TB.
+   Note that zero indicates that we are not exiting the TB.  */
+typedef enum {
+    NO_INSN,
+    NO_EXIT,
+
+    /* We have emitted one or more goto_tb.  No fixup required.  */
+    EXIT_GOTO_TB,
+
+    /* We are not using a goto_tb (for whatever reason), but have updated
+       the PC (for whatever reason), so there's no need to do it again on
+       exiting the TB.  */
+    EXIT_PC_UPDATED,
+
+    /* We are exiting the TB, but have neither emitted a goto_tb, nor
+       updated the PC for the next instruction to be executed.  */
+    EXIT_PC_STALE,
+
+    /* We are ending the TB with a noreturn function call, e.g. longjmp.
+       No following code will be executed.  */
+    EXIT_NORETURN,
+} ExitStatus;
+
+/* Global registers.  */
+static TCGv_ptr cpu_env;
+static TCGv cpu_pc;
+static TCGv cpu_gpr[128][4];
+
+/* register names */
+static char cpu_reg_names[128][4][8];
+
+#include "gen-icount.h"
+
+static void spu_translate_init(void)
+{
+    static int done_init = 0;
+    int i, j;
+
+    if (done_init) {
+        return;
+    }
+    done_init = 1;
+
+    cpu_env = tcg_global_reg_new_ptr(TCG_AREG0, "env");
+    cpu_pc = tcg_global_mem_new(TCG_AREG0, offsetof(CPUState, pc), "pc");
+
+    for (i = 0; i < 128; i++) {
+        for (j = 0; j < 4; ++j) {
+            sprintf(cpu_reg_names[i][j], "$%d:%d", i, j);
+            cpu_gpr[i][j] = tcg_global_mem_new(TCG_AREG0,
+                                               offsetof(CPUState, gpr[i*4+j]),
+                                               cpu_reg_names[i][j]);
+        }
+    }
+
+    /* Register the helpers.  */
+#define GEN_HELPER 2
+#include "helper.h"
+}
+
+static void gen_excp_1(int exception, int error_code)
+{
+    TCGv tmp1, tmp2;
+
+    tmp1 = tcg_const_tl(exception);
+    tmp2 = tcg_const_tl(error_code);
+    gen_helper_excp(tmp1, tmp2);
+    tcg_temp_free(tmp2);
+    tcg_temp_free(tmp1);
+}
+
+static ExitStatus gen_excp(DisasContext *ctx, int exception, int error_code)
+{
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
+    gen_excp_1(exception, error_code);
+    return EXIT_NORETURN;
+}
+
+#define _(X)  { qemu_log("Unimplemented insn: " #X "\n"); return NO_EXIT; }
+
+static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
+{
+    unsigned op, rt, ra, rb, rc;
+    signed imm;
+
+    /* Normally, RT is on the right, etc.  To be fixed up below as needed.  */
+    rt = insn & 0x7f;
+    ra = (insn >> 7) & 0x7f;
+    rb = (insn >> 14) & 0x7f;
+    rc = 0;
+    imm = 0;
+
+    /* Up to 11 bits are considered "opcode", depending on the format.
+       To make things easy to pull out of the ISA document, we arrange
+       the switch statement with a left-aligned 12-bits.  Therefore
+       the number in the switch can be read directly from the left
+       aligned ISA document, padded on the right with enough bits to
+       make up 5 hexidecimal digits.  */
+    /* Sadly, it does not appear as if, except for certain cases, that
+       there are dedicated opcode bits that indicate the width of the
+       opcode.  So we try matching with increasing opcode width until
+       we get a match.  */
+    op = insn >> 20;
+    switch (opwidth) {
+    case 4:
+        /* RRR Instruction Format (4-bit op).  */
+	op &= 0xf00;
+        rc = rt;
+        rt = (insn >> 21) & 0x7f;
+        break;
+    case 7:
+        /* RI18 Instruction Format (7-bit op).  */
+        op &= 0xfe0;
+        imm = (uint32_t)(insn << 7) >> 14;
+        break;
+    case 8:
+        /* RI10 Instruction Format (8-bit op).  */
+        op &= 0xff0;
+        imm = (int32_t)(insn << 8) >> 22;
+        break;
+    case 9:
+        /* RI16 Instruction Format (9-bit op).  */
+        op &= 0xff8;
+        imm = (int32_t)(insn << 9) >> 16;
+        break;
+    case 10:
+        /* ??? Not specifically documented in section 2.3, but the
+           floating-point integer conversions have a 10-bit opcode
+           and with an unsigned 8-bit immediate.  */
+        op &= 0xffc;
+        imm = (insn >> 14) & 0xff;
+        break;
+    case 11:
+        /* RR/RI7 Instruction Format (11-bit op).  */
+        op &= 0xffe;
+        imm = (rb ^ 0x40) - 0x40;
+        break;
+    default:
+        abort();
+    }
+
+    switch (op) {
+    /* RRR Instruction Format (4-bit op).  */
+    case 0xc00: _(MPYA);
+    case 0x800: _(SELB);
+    case 0xb00: _(SHUFB);
+    case 0xe00: _(FMA);
+    case 0xd00: _(FNMS);
+    case 0xf00: _(FMS);
+
+    /* RI18 Instruction Format (7-bit op).  */
+    case 0x420: _(ILA);
+    case 0x100: _(HBRA);
+    case 0x120: _(HBRR);
+
+    /* RI10 Instruction Format (8-bit op).  */
+    case 0x340: _(LQD);
+    case 0x240: _(STQD);
+    case 0x1d0: _(AHI);
+    case 0x1c0: _(AI);
+    case 0x0d0: _(SFHI);
+    case 0x0c0: _(SFI);
+    case 0x740: _(MPYI);
+    case 0x750: _(MPYUI);
+    case 0x160: _(ANDBI);
+    case 0x150: _(ANDHI);
+    case 0x140: _(ANDI);
+    case 0x060: _(ORBI);
+    case 0x050: _(ORHI);
+    case 0x040: _(ORI);
+    case 0x460: _(XORBI);
+    case 0x450: _(XORHI);
+    case 0x440: _(XORI);
+    case 0x7f0: _(HEQI);
+    case 0x4f0: _(HGTI);
+    case 0x5f0: _(HLGTI);
+    case 0x7e0: _(CEQBI);
+    case 0x7d0: _(CEQHI);
+    case 0x7c0: _(CEQI);
+    case 0x4e0: _(CGTBI);
+    case 0x4d0: _(CGTHI);
+    case 0x4c0: _(CGTI);
+    case 0x5e0: _(CLGTBI);
+    case 0x5d0: _(CLGTHI);
+    case 0x5c0: _(CLGTI);
+
+    /* RI16 Instruction Format (9-bit op).  */
+    case 0x308: _(LQA);
+    case 0x338: _(LQR);
+    case 0x208: _(STQA);
+    case 0x238: _(STQR);
+    case 0x418: _(ILH);
+    case 0x410: _(ILHU);
+    case 0x408: _(IL);
+    case 0x608: _(IOHL);
+    case 0x328: _(FSMBI);
+    case 0x320: _(BR);
+    case 0x300: _(BRA);
+    case 0x330: _(BRSL);
+    case 0x310: _(BRASL);
+    case 0x210: _(BRNZ);
+    case 0x200: _(BRZ);
+    case 0x230: _(BRHNZ);
+    case 0x220: _(BRHZ);
+
+    /* RR/RI7 Instruction Format (11-bit op).  */
+    case 0x388: _(LDX);
+    case 0x288: _(STQX);
+    case 0x3e8: _(CBD);
+    case 0x3a8: _(CBX);
+    case 0x3ea: _(CHD);
+    case 0x3aa: _(CHX);
+    case 0x3ec: _(CWD);
+    case 0x3ac: _(CWX);
+    case 0x3ee: _(CDD);
+    case 0x3ae: _(CDX);
+    case 0x190: _(AH);
+    case 0x180: _(A);
+    case 0x090: _(SFH);
+    case 0x080: _(SF);
+    case 0x680: _(ADDX);
+    case 0x184: _(CG);
+    case 0x684: _(CGX);
+    case 0x682: _(SFX);
+    case 0x084: _(BG);
+    case 0x686: _(BGX);
+    case 0x788: _(MPY);
+    case 0x798: _(MPYU);
+    case 0x78a: _(MPYH);
+    case 0x78e: _(MPYS);
+    case 0x78c: _(MPYHH);
+    case 0x68c: _(MPYHHA);
+    case 0x79c: _(MPYHHU);
+    case 0x69c: _(MPYHHAU);
+    case 0x54a: _(CLZ);
+    case 0x568: _(CNTB);
+    case 0x36c: _(FSMB);
+    case 0x36a: _(FSMH);
+    case 0x368: _(FSM);
+    case 0x364: _(GBB);
+    case 0x362: _(GBH);
+    case 0x360: _(GB);
+    case 0x1a6: _(AVGB);
+    case 0x0a6: _(ABSDB);
+    case 0x4a6: _(SUMB);
+    case 0x56c: _(XSBH);
+    case 0x55c: _(XSHW);
+    case 0x54c: _(XSWD);
+    case 0x182: _(AND);
+    case 0x582: _(ANDC);
+    case 0x082: _(OR);
+    case 0x592: _(ORC);
+    case 0x3e0: _(ORX);
+    case 0x482: _(XOR);
+    case 0x192: _(NAND);
+    case 0x092: _(NOR);
+    case 0x492: _(EQV);
+    case 0x0be: _(SHLH);
+    case 0x0fe: _(SHLHI);
+    case 0x0b6: _(SHL);
+    case 0x0f6: _(SHLI);
+    case 0x3b6: _(SHLQBI);
+    case 0x3f6: _(SHLQBII);
+    case 0x3be: _(SHLQBY);
+    case 0x3fe: _(SHLQBYI);
+    case 0x39e: _(SHLQBYBI);
+    case 0x0b8: _(ROTH);
+    case 0x0f8: _(ROTHI);
+    case 0x0b0: _(ROT);
+    case 0x0f0: _(ROTI);
+    case 0x3b8: _(ROTQBY);
+    case 0x3f8: _(ROTBYI);
+    case 0x398: _(ROTBYBI);
+    case 0x3b0: _(ROTQBI);
+    case 0x3f0: _(ROTQBII);
+    case 0x0ba: _(ROTHM);
+    case 0x0fa: _(ROTHMI);
+    case 0x0b2: _(ROTM);
+    case 0x0f2: _(ROTMI);
+    case 0x3ba: _(ROTQMBY);
+    case 0x3fa: _(ROTQMBYI);
+    case 0x39a: _(ROTQMBYBI);
+    case 0x3b2: _(ROTQMBI);
+    case 0x3f2: _(ROTQMBII);
+    case 0x0bc: _(ROTMAH);
+    case 0x0fc: _(ROTMAHI);
+    case 0x0b4: _(ROTMA);
+    case 0x0f4: _(ROTMAI);
+    case 0x7b0: _(HEQ);
+    case 0x2b0: _(HGT);
+    case 0x5b0: _(HLGT);
+    case 0x7a0: _(CEQB);
+    case 0x790: _(CEQH);
+    case 0x780: _(CEQ);
+    case 0x4a0: _(CGTB);
+    case 0x490: _(CGTH);
+    case 0x480: _(CGT);
+    case 0x5a0: _(CLGTB);
+    case 0x590: _(CLGTH);
+    case 0x580: _(CLGT);
+    case 0x3a0: _(BI);
+    case 0x354: _(IRET);
+    case 0x356: _(BISLED);
+    case 0x352: _(BISL);
+    case 0x250: _(BIZ);
+    case 0x252: _(BINZ);
+    case 0x254: _(BIHZ);
+    case 0x256: _(BIHNZ);
+    case 0x358: _(HBR);
+    case 0x588: _(FA);
+    case 0x598: _(DFA);
+    case 0x58a: _(FS);
+    case 0x59a: _(DFS);
+    case 0x58c: _(FM);
+    case 0x59c: _(DFM);
+    case 0x6b8: _(DFMA);
+    case 0x6bc: _(DFNMS);
+    case 0x6ba: _(DFMS);
+    case 0x6be: _(DFNMA);
+    case 0x370: _(FREST);
+    case 0x372: _(FRSQEST);
+    case 0x7a8: _(FI);
+    case 0x768: _(CSFLT);
+    case 0x760: _(CFLTS);
+    case 0x76c: _(CUFLT);
+    case 0x764: _(CFLTU);
+    case 0x772: _(FRDS);
+    case 0x770: _(FESD);
+    case 0x786: _(DFCEQ);
+    case 0x796: _(DFCMEQ);
+    case 0x586: _(DFCGT);
+    case 0x596: _(DFCMGT);
+    case 0x77e: _(DFTSV);
+    case 0x784: _(FCEQ);
+    case 0x794: _(FCMEQ);
+    case 0x584: _(FCGT);
+    case 0x594: _(FCMGT);
+    case 0x774: _(FSCRWR);
+    case 0x730: _(FSCRRD);
+    case 0x000: _(STOP);
+    case 0x280: _(STOPD);
+    case 0x002: _(LNOP);
+    case 0x402: _(NOP);
+    case 0x004: _(SYNC);
+    case 0x006: _(DSYNC);
+    case 0x018: _(MFSPR);
+    case 0x218: _(MTSPR);
+    case 0x01a: _(RDCH);
+    case 0x01e: _(RCHCNT);
+    case 0x21a: _(WRCH);
+    default:
+        return NO_INSN;
+    }
+}
+
+static ExitStatus translate_1 (DisasContext *ctx, uint32_t insn)
+{
+    ExitStatus ret;
+    int width;
+
+    if (insn & 0x80000000) {
+        ret = translate_0(ctx, insn, 4);
+    } else {
+        for (width = 7; width <= 11; ++width) {
+            ret = translate_0(ctx, insn, width);
+            if (ret != NO_INSN) {
+                break;
+            }
+        }
+    }
+    if (ret == NO_INSN) {
+        ret = gen_excp(ctx, EXCP_ILLOPC, 0);
+    }
+    return ret;
+}
+
+static inline void gen_intermediate_code_internal(CPUState *env,
+                                                  TranslationBlock *tb,
+                                                  int search_pc)
+{
+    DisasContext ctx, *ctxp = &ctx;
+    uint32_t pc_start;
+    uint32_t insn;
+    uint16_t *gen_opc_end;
+    CPUBreakpoint *bp;
+    int j, lj = -1;
+    ExitStatus ret;
+    int num_insns;
+    int max_insns;
+
+    gen_opc_end = gen_opc_buf + OPC_MAX_SIZE;
+
+    ctx.tb = tb;
+    ctx.pc = pc_start = tb->pc;
+
+    num_insns = 0;
+    max_insns = tb->cflags & CF_COUNT_MASK;
+    if (max_insns == 0) {
+        max_insns = CF_COUNT_MASK;
+    }
+
+    gen_icount_start();
+    do {
+        if (unlikely(!QTAILQ_EMPTY(&env->breakpoints))) {
+            QTAILQ_FOREACH(bp, &env->breakpoints, entry) {
+                if (bp->pc == ctx.pc) {
+                    gen_excp(&ctx, EXCP_DEBUG, 0);
+                    break;
+                }
+            }
+        }
+        if (search_pc) {
+            j = gen_opc_ptr - gen_opc_buf;
+            if (lj < j) {
+                lj++;
+                while (lj < j) {
+                    gen_opc_instr_start[lj++] = 0;
+                }
+            }
+            gen_opc_pc[lj] = ctx.pc;
+            gen_opc_instr_start[lj] = 1;
+            gen_opc_icount[lj] = num_insns;
+        }
+        if (num_insns + 1 == max_insns && (tb->cflags & CF_LAST_IO)) {
+            gen_io_start();
+        }
+        insn = ldl_code(ctx.pc);
+        num_insns++;
+
+	if (unlikely(qemu_loglevel_mask(CPU_LOG_TB_OP))) {
+            tcg_gen_debug_insn_start(ctx.pc);
+        }
+
+        ret = translate_1(ctxp, insn);
+        ctx.pc += 4;
+
+        /* If we reach a page boundary, are single stepping,
+           or exhaust instruction count, stop generation.  */
+        if (ret == NO_EXIT
+            && ((ctx.pc & (TARGET_PAGE_SIZE - 1)) == 0
+                || gen_opc_ptr >= gen_opc_end
+                || num_insns >= max_insns
+                || singlestep
+                || env->singlestep_enabled)) {
+            ret = EXIT_PC_STALE;
+        }
+    } while (ret == NO_EXIT);
+
+    if (tb->cflags & CF_LAST_IO) {
+        gen_io_end();
+    }
+
+    switch (ret) {
+    case EXIT_GOTO_TB:
+    case EXIT_NORETURN:
+        break;
+    case EXIT_PC_STALE:
+        tcg_gen_movi_tl(cpu_pc, ctx.pc);
+        /* FALLTHRU */
+    case EXIT_PC_UPDATED:
+        if (env->singlestep_enabled) {
+            gen_excp_1(EXCP_DEBUG, 0);
+        } else {
+            tcg_gen_exit_tb(0);
+        }
+        break;
+    default:
+        abort();
+    }
+
+    gen_icount_end(tb, num_insns);
+    *gen_opc_ptr = INDEX_op_end;
+    if (search_pc) {
+        j = gen_opc_ptr - gen_opc_buf;
+        lj++;
+        while (lj <= j)
+            gen_opc_instr_start[lj++] = 0;
+    } else {
+        tb->size = ctx.pc - pc_start;
+        tb->icount = num_insns;
+    }
+
+#ifdef DEBUG_DISAS
+    if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
+        qemu_log("IN: %s\n", lookup_symbol(pc_start));
+        log_target_disas(pc_start, ctx.pc - pc_start, 1);
+        qemu_log("\n");
+    }
+#endif
+}
+
+void gen_intermediate_code (CPUState *env, struct TranslationBlock *tb)
+{
+    gen_intermediate_code_internal(env, tb, 0);
+}
+
+void gen_intermediate_code_pc (CPUState *env, struct TranslationBlock *tb)
+{
+    gen_intermediate_code_internal(env, tb, 1);
+}
+
+CPUState * cpu_spu_init (const char *cpu_model)
+{
+    CPUState *env;
+
+    spu_translate_init();
+
+    env = qemu_mallocz(sizeof(CPUState));
+    cpu_exec_init(env);
+
+    qemu_init_vcpu(env);
+    return env;
+}
+
+void restore_state_to_opc(CPUState *env, TranslationBlock *tb, int pc_pos)
+{
+    env->pc = gen_opc_pc[pc_pos];
+}

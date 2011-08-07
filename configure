@@ -288,7 +288,7 @@ else
 fi
 
 case "$cpu" in
-  alpha|cris|ia64|lm32|m68k|microblaze|ppc|ppc64|sparc64|unicore32)
+  alpha|cris|ia64|lm32|m68k|microblaze|ppc|ppc64|sparc64|spu|unicore32)
     cpu="$cpu"
   ;;
   i386|i486|i586|i686|i86pc|BePC)
@@ -870,6 +870,7 @@ sh4eb-softmmu \
 sparc-softmmu \
 sparc64-softmmu \
 s390x-softmmu \
+spu-softmmu \
 "
 fi
 # the following are Linux specific
@@ -2756,7 +2757,7 @@ echo "docdir=$docdir" >> $config_host_mak
 echo "confdir=$confdir" >> $config_host_mak
 
 case "$cpu" in
-  i386|x86_64|alpha|cris|hppa|ia64|lm32|m68k|microblaze|mips|mips64|ppc|ppc64|s390|s390x|sparc|sparc64|unicore32)
+  i386|x86_64|alpha|cris|hppa|ia64|lm32|m68k|microblaze|mips|mips64|ppc|ppc64|s390|s390x|sparc|sparc64|spu|unicore32)
     ARCH=$cpu
   ;;
   armv4b|armv4l)
@@ -3329,6 +3330,9 @@ case "$target_arch2" in
     target_phys_bits=64
     target_long_alignment=8
   ;;
+  spu)
+    target_phys_bits=32
+  ;;
   unicore32)
     target_phys_bits=32
   ;;
@@ -3505,6 +3509,10 @@ for i in $ARCH $TARGET_BASE_ARCH ; do
   sparc*)
     echo "CONFIG_SPARC_DIS=y"  >> $config_target_mak
     echo "CONFIG_SPARC_DIS=y"  >> $libdis_config_mak
+  ;;
+  spu)
+    echo "CONFIG_SPU_DIS=y"  >> $config_target_mak
+    echo "CONFIG_SPU_DIS=y"  >> $libdis_config_mak
   ;;
   esac
 done
