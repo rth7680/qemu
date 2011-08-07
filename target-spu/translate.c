@@ -152,7 +152,15 @@ static void free_temp(TCGv temp[4])
     }
 }
 
-static void gen_operate (void (*op)(TCGv, TCGv, TCGv),
+static void gen_operate2 (void (*op)(TCGv, TCGv), TCGv rt[4], TCGv ra[4])
+{
+    op(rt[0], ra[0]);
+    op(rt[1], ra[1]);
+    op(rt[2], ra[2]);
+    op(rt[3], ra[3]);
+}
+
+static void gen_operate3 (void (*op)(TCGv, TCGv, TCGv),
                          TCGv rt[4], TCGv ra[4], TCGv rb[4])
 {
     op(rt[0], ra[0], rb[0]);
@@ -221,6 +229,234 @@ static ExitStatus gen_storeq(TCGv addr, TCGv reg[4])
     return NO_EXIT;
 }
 
+static void gen_addh(TCGv out, TCGv a, TCGv b)
+{
+    TCGv oh, ah, bh;
+
+    oh = tcg_temp_new();
+    ah = tcg_temp_new();
+    bh = tcg_temp_new();
+
+    tcg_gen_shri_tl(ah, a, 16);
+    tcg_gen_shri_tl(bh, b, 16);
+    tcg_gen_add_tl(out, a, b);
+    tcg_gen_add_tl(oh, ah, bh);
+    tcg_gen_deposit_tl(out, out, oh, 16, 16);
+
+    tcg_temp_free(oh);
+    tcg_temp_free(ah);
+    tcg_temp_free(bh);
+}
+
+static void gen_subh(TCGv out, TCGv a, TCGv b)
+{
+    TCGv oh, ah, bh;
+
+    oh = tcg_temp_new();
+    ah = tcg_temp_new();
+    bh = tcg_temp_new();
+
+    tcg_gen_shri_tl(ah, a, 16);
+    tcg_gen_shri_tl(bh, b, 16);
+    tcg_gen_sub_tl(out, a, b);
+    tcg_gen_sub_tl(oh, ah, bh);
+    tcg_gen_deposit_tl(out, out, oh, 16, 16);
+
+    tcg_temp_free(oh);
+    tcg_temp_free(ah);
+    tcg_temp_free(bh);
+}
+
+static void gen_addx(TCGv out, TCGv a, TCGv b)
+{
+    tcg_gen_andi_tl(out, out, 1);
+    tcg_gen_add_tl(out, out, a);
+    tcg_gen_add_tl(out, out, b);
+}
+
+static void gen_cg(TCGv out, TCGv a, TCGv b)
+{
+#if TCG_TARGET_REG_BITS == 32
+    /* For 32-bit hosts, we can re-use the host's hardware carry
+       generation by using an ADD2 opcode.  We discard the low
+       part of the output.  */
+    TCGv out_low = tcg_temp_new();
+    TCGv in_zero = tcg_const_tl(0);
+    tcg_gen_op6_i32(INDEX_op_add2_i32, out_low, out,
+                    a, in_zero, b, in_zero);
+    tcg_temp_free(out_low);
+    tcg_temp_free(in_zero);
+#else
+    TCGv_i64 o64, b64;
+
+    o64 = tcg_temp_new_i64();
+    b64 = tcg_temp_new_i64();
+
+    tcg_gen_extu_i32_i64(o64, a);
+    tcg_gen_extu_i32_i64(b64, b);
+    tcg_gen_add_i64(o64, o64, b64);
+    tcg_gen_shri_i64(o64, o64, 32);
+    tcg_gen_trunc_i64_i32(out, o64);
+#endif
+}
+
+static void gen_cgx(TCGv out, TCGv a, TCGv b)
+{
+#if TCG_TARGET_REG_BITS == 32
+    /* For 32-bit hosts, we can re-use the host's hardware carry
+       generation by using an ADD2 opcode.  We discard the low
+       part of the output.  */
+    TCGv out_low = tcg_temp_new();
+    TCGv in_zero = tcg_const_tl(0);
+    TCGv out_lsb = tcg_temp_new();
+
+    tcg_gen_andi_tl(out_lsb, out, 1);
+    tcg_gen_op6_i32(INDEX_op_add2_i32, out_low, out,
+                    a, in_zero, b, in_zero);
+    tcg_gen_op6_i32(INDEX_op_add2_i32, out_low, out,
+                    out_low, out, out_lsb, in_zero);
+
+    tcg_temp_free(out_low);
+    tcg_temp_free(in_zero);
+    tcg_temp_free(out_lsb);
+#else
+    TCGv_i64 o64, a64, b64;
+
+    o64 = tcg_temp_new_i64();
+    a64 = tcg_temp_new_i64();
+    b64 = tcg_temp_new_i64();
+
+    tcg_gen_extu_i32_i64(o64, out);
+    tcg_gen_extu_i32_i64(a64, a);
+    tcg_gen_extu_i32_i64(b64, b);
+
+    tcg_gen_andi_i64(o64, o64, 1);
+    tcg_gen_add_i64(o64, o64, a64);
+    tcg_gen_add_i64(o64, o64, b64);
+    tcg_gen_shri_i64(o64, o64, 32);
+    tcg_gen_trunc_i64_i32(out, o64);
+
+    tcg_temp_free_i64(o64);
+    tcg_temp_free_i64(a64);
+    tcg_temp_free_i64(b64);
+#endif
+}
+
+static void gen_sfx(TCGv out, TCGv a, TCGv b)
+{
+    tcg_gen_andi_tl(out, out, 1);
+    tcg_gen_add_tl(out, out, b);
+    tcg_gen_sub_tl(out, out, a);
+}
+
+static void gen_bg(TCGv out, TCGv a, TCGv b)
+{
+    tcg_gen_setcond_i32(TCG_COND_GTU, out, a, b);
+}
+
+static void gen_bgx(TCGv out, TCGv a, TCGv b)
+{
+    TCGv_i64 o64, a64, b64;
+
+    o64 = tcg_temp_new_i64();
+    a64 = tcg_temp_new_i64();
+    b64 = tcg_temp_new_i64();
+
+    tcg_gen_extu_i32_i64(o64, out);
+    tcg_gen_extu_i32_i64(a64, a);
+    tcg_gen_extu_i32_i64(b64, b);
+
+    tcg_gen_andi_i64(o64, o64, 1);
+    tcg_gen_add_i64(o64, o64, b64);
+    tcg_gen_sub_i64(o64, o64, a64);
+    tcg_gen_shri_i64(o64, o64, 63);
+    tcg_gen_trunc_i64_i32(out, o64);
+
+    tcg_temp_free_i64(o64);
+    tcg_temp_free_i64(a64);
+    tcg_temp_free_i64(b64);
+}
+
+static void gen_mpy(TCGv out, TCGv a, TCGv b)
+{
+    TCGv al = tcg_temp_new();
+    TCGv bl = tcg_temp_new();
+
+    tcg_gen_ext16s_tl(al, a);
+    tcg_gen_ext16s_tl(bl, b);
+    tcg_gen_mul_tl(out, al, bl);
+
+    tcg_temp_free(al);
+    tcg_temp_free(bl);
+}
+
+static void gen_mpyu(TCGv out, TCGv a, TCGv b)
+{
+    TCGv al = tcg_temp_new();
+    TCGv bl = tcg_temp_new();
+
+    tcg_gen_ext16u_tl(al, a);
+    tcg_gen_ext16u_tl(bl, b);
+    tcg_gen_mul_tl(out, al, bl);
+
+    tcg_temp_free(al);
+    tcg_temp_free(bl);
+}
+
+static void gen_mpyh(TCGv out, TCGv a, TCGv b)
+{
+    TCGv ah = tcg_temp_new();
+    TCGv bl = tcg_temp_new();
+
+    tcg_gen_sari_tl(ah, a, 16);
+    tcg_gen_ext16s_tl(bl, b);
+    tcg_gen_mul_tl(out, ah, bl);
+
+    tcg_temp_free(ah);
+    tcg_temp_free(bl);
+}
+
+static void gen_mpys(TCGv out, TCGv a, TCGv b)
+{
+    TCGv al = tcg_temp_new();
+    TCGv bl = tcg_temp_new();
+
+    tcg_gen_ext16s_tl(al, a);
+    tcg_gen_ext16s_tl(bl, b);
+    tcg_gen_mul_tl(out, al, bl);
+    tcg_gen_sari_tl(out, out, 16);
+
+    tcg_temp_free(al);
+    tcg_temp_free(bl);
+}
+
+static void gen_mpyhh(TCGv out, TCGv a, TCGv b)
+{
+    TCGv ah = tcg_temp_new();
+    TCGv bh = tcg_temp_new();
+
+    tcg_gen_sari_tl(ah, a, 16);
+    tcg_gen_sari_tl(bh, b, 16);
+    tcg_gen_mul_tl(out, ah, bh);
+
+    tcg_temp_free(ah);
+    tcg_temp_free(bh);
+}
+
+static void gen_mpyhhu(TCGv out, TCGv a, TCGv b)
+{
+    TCGv ah = tcg_temp_new();
+    TCGv bh = tcg_temp_new();
+
+    tcg_gen_shri_tl(ah, a, 16);
+    tcg_gen_shri_tl(bh, b, 16);
+    tcg_gen_mul_tl(out, ah, bh);
+
+    tcg_temp_free(ah);
+    tcg_temp_free(bh);
+}
+
+
 #define _(X)  { qemu_log("Unimplemented insn: " #X "\n"); return NO_EXIT; }
 
 static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
@@ -288,6 +524,12 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
     switch (op) {
     /* RRR Instruction Format (4-bit op).  */
     case 0xc00: _(MPYA);
+        load_temp_imm(temp, imm);
+        gen_operate3(gen_mpy, temp, cpu_gpr[ra], cpu_gpr[rb]);
+        gen_operate3(tcg_gen_add_tl, cpu_gpr[rt], cpu_gpr[rc], temp);
+        free_temp(temp);
+        return NO_EXIT;
+
     case 0x800: _(SELB);
     case 0xb00: _(SHUFB);
     case 0xe00: _(FMA);
@@ -306,12 +548,42 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
     case 0x240: /* STQD */
         return gen_storeq(gen_address_d(ctx, cpu_gpr[ra][0], imm), cpu_gpr[rt]);
 
-    case 0x1d0: _(AHI);
-    case 0x1c0: _(AI);
-    case 0x0d0: _(SFHI);
-    case 0x0c0: _(SFI);
+    case 0x1d0: /* AHI */
+        imm &= 0xffff;
+        imm |= imm << 16;
+        load_temp_imm(temp, imm);
+        gen_operate3(gen_addh, cpu_gpr[rt], cpu_gpr[ra], temp);
+        free_temp(temp);
+        return NO_EXIT;
+    case 0x1c0: /* AI */
+        load_temp_imm(temp, imm);
+        gen_operate3(tcg_gen_add_tl, cpu_gpr[rt], cpu_gpr[ra], temp);
+        free_temp(temp);
+        return NO_EXIT;
+    case 0x0d0: /* SFHI */
+        imm &= 0xffff;
+        imm |= imm << 16;
+        load_temp_imm(temp, imm);
+        gen_operate3(gen_subh, cpu_gpr[rt], temp, cpu_gpr[ra]);
+        free_temp(temp);
+        return NO_EXIT;
+    case 0x0c0: /* SFI */
+        load_temp_imm(temp, imm);
+        gen_operate3(tcg_gen_sub_tl, cpu_gpr[rt], temp, cpu_gpr[ra]);
+        free_temp(temp);
+        return NO_EXIT;
+
     case 0x740: _(MPYI);
+        load_temp_imm(temp, imm);
+        gen_operate3(gen_mpy, cpu_gpr[rt], cpu_gpr[ra], temp);
+        free_temp(temp);
+        return NO_EXIT;
     case 0x750: _(MPYUI);
+        load_temp_imm(temp, imm);
+        gen_operate3(gen_mpyu, cpu_gpr[rt], cpu_gpr[ra], temp);
+        free_temp(temp);
+        return NO_EXIT;
+
     case 0x160: _(ANDBI);
     case 0x150: _(ANDHI);
     case 0x140: _(ANDI);
@@ -355,7 +627,7 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
         return gen_movi(cpu_gpr[rt], imm);
     case 0x608: /* IOHL */
         load_temp_imm(temp, imm);
-        gen_operate(tcg_gen_or_tl, cpu_gpr[rt], cpu_gpr[rt], temp);
+        gen_operate3(tcg_gen_or_tl, cpu_gpr[rt], cpu_gpr[rt], temp);
         free_temp(temp);
         return NO_EXIT;
     case 0x328: /* FSMBI */
@@ -390,24 +662,69 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
     case 0x3ac: _(CWX);
     case 0x3ee: _(CDD);
     case 0x3ae: _(CDX);
-    case 0x190: _(AH);
-    case 0x180: _(A);
-    case 0x090: _(SFH);
-    case 0x080: _(SF);
-    case 0x680: _(ADDX);
-    case 0x184: _(CG);
-    case 0x684: _(CGX);
-    case 0x682: _(SFX);
-    case 0x084: _(BG);
-    case 0x686: _(BGX);
-    case 0x788: _(MPY);
-    case 0x798: _(MPYU);
-    case 0x78a: _(MPYH);
-    case 0x78e: _(MPYS);
-    case 0x78c: _(MPYHH);
+
+    case 0x190: /* AH */
+        gen_operate3(gen_addh, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x180: /* A */
+        gen_operate3(tcg_gen_add_tl, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x090: /* SFH */
+        gen_operate3(gen_subh, cpu_gpr[rt], cpu_gpr[rb], cpu_gpr[ra]);
+        return NO_EXIT;
+    case 0x080: /* SF */
+        gen_operate3(tcg_gen_sub_tl, cpu_gpr[rt], cpu_gpr[rb], cpu_gpr[ra]);
+        return NO_EXIT;
+    case 0x680: /* ADDX */
+        gen_operate3(gen_addx, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x184: /* CG */
+        gen_operate3(gen_cg, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x684: /* CGX */
+        gen_operate3(gen_cgx, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x682: /* SFX */
+        gen_operate3(gen_sfx, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x084: /* BG */
+        gen_operate3(gen_bg, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x686: /* BGX */
+        gen_operate3(gen_bgx, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+
+    case 0x788: /* MPY */
+        gen_operate3(gen_mpy, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x798: /* MPYU */
+        gen_operate3(gen_mpyu, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x78a: /* MPYH */
+        gen_operate3(gen_mpyh, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x78e: /* MPYS */
+        gen_operate3(gen_mpys, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x78c: /* MPYHH */
+        gen_operate3(gen_mpyhh, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
     case 0x68c: _(MPYHHA);
-    case 0x79c: _(MPYHHU);
-    case 0x69c: _(MPYHHAU);
+        load_temp_imm(temp, imm);
+        gen_operate3(gen_mpyhh, temp, cpu_gpr[ra], cpu_gpr[rb]);
+        gen_operate3(tcg_gen_add_tl, cpu_gpr[rt], cpu_gpr[rt], temp);
+        free_temp(temp);
+        return NO_EXIT;
+    case 0x79c: /* MPYHHU */
+        gen_operate3(gen_mpyhhu, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);
+        return NO_EXIT;
+    case 0x69c: /* MPYHHAU */
+        load_temp_imm(temp, imm);
+        gen_operate3(gen_mpyhhu, temp, cpu_gpr[ra], cpu_gpr[rb]);
+        gen_operate3(tcg_gen_add_tl, cpu_gpr[rt], cpu_gpr[rt], temp);
+        free_temp(temp);
+        return NO_EXIT;
+
     case 0x54a: _(CLZ);
     case 0x568: _(CNTB);
     case 0x36c: _(FSMB);
