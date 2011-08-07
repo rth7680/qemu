@@ -174,6 +174,53 @@ static int32_t expand_fsmbi(int32_t imm4)
     return ret;
 }
 
+static TCGv gen_address_a(DisasContext *ctx, uint32_t a)
+{
+    return tcg_const_tl(a & ctx->lslr);
+}
+
+static TCGv gen_address_x(DisasContext *ctx, TCGv a, TCGv b)
+{
+    TCGv addr = tcg_temp_new();
+    tcg_gen_add_tl(addr, a, b);
+    tcg_gen_andi_tl(addr, addr, ctx->lslr);
+    return addr;
+}
+
+static TCGv gen_address_d(DisasContext *ctx, TCGv a, int32_t disp)
+{
+    TCGv addr = tcg_temp_new();
+    tcg_gen_addi_tl(addr, a, disp & ctx->lslr);
+    tcg_gen_andi_tl(addr, addr, ctx->lslr);
+    return addr;
+}
+
+static ExitStatus gen_loadq(TCGv addr, TCGv reg[4])
+{
+    tcg_gen_qemu_ld32u(reg[0], addr, 0);
+    tcg_gen_addi_tl(addr, addr, 4);
+    tcg_gen_qemu_ld32u(reg[1], addr, 0);
+    tcg_gen_addi_tl(addr, addr, 4);
+    tcg_gen_qemu_ld32u(reg[2], addr, 0);
+    tcg_gen_addi_tl(addr, addr, 4);
+    tcg_gen_qemu_ld32u(reg[3], addr, 0);
+    tcg_temp_free(addr);
+    return NO_EXIT;
+}
+
+static ExitStatus gen_storeq(TCGv addr, TCGv reg[4])
+{
+    tcg_gen_qemu_st32(reg[0], addr, 0);
+    tcg_gen_addi_tl(addr, addr, 4);
+    tcg_gen_qemu_st32(reg[1], addr, 0);
+    tcg_gen_addi_tl(addr, addr, 4);
+    tcg_gen_qemu_st32(reg[2], addr, 0);
+    tcg_gen_addi_tl(addr, addr, 4);
+    tcg_gen_qemu_st32(reg[3], addr, 0);
+    tcg_temp_free(addr);
+    return NO_EXIT;
+}
+
 #define _(X)  { qemu_log("Unimplemented insn: " #X "\n"); return NO_EXIT; }
 
 static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
@@ -248,14 +295,17 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
     case 0xf00: _(FMS);
 
     /* RI18 Instruction Format (7-bit op).  */
-    case 0x420: _(ILA);
+    case 0x420: /* ILA */
         return gen_movi(cpu_gpr[rt], imm);
     case 0x100: _(HBRA);
     case 0x120: _(HBRR);
 
     /* RI10 Instruction Format (8-bit op).  */
-    case 0x340: _(LQD);
-    case 0x240: _(STQD);
+    case 0x340: /* LQD */
+        return gen_loadq(gen_address_d(ctx, cpu_gpr[ra][0], imm), cpu_gpr[rt]);
+    case 0x240: /* STQD */
+        return gen_storeq(gen_address_d(ctx, cpu_gpr[ra][0], imm), cpu_gpr[rt]);
+
     case 0x1d0: _(AHI);
     case 0x1c0: _(AI);
     case 0x0d0: _(SFHI);
@@ -285,26 +335,30 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
     case 0x5c0: _(CLGTI);
 
     /* RI16 Instruction Format (9-bit op).  */
-    case 0x308: _(LQA);
-    case 0x338: _(LQR);
-    case 0x208: _(STQA);
-    case 0x238: _(STQR);
+    case 0x308: /* LQA */
+        return gen_loadq(gen_address_a(ctx, imm), cpu_gpr[rt]);
+    case 0x338: /* LQR */
+        return gen_loadq(gen_address_a(ctx, ctx->pc + imm), cpu_gpr[rt]);
+    case 0x208: /* STQA */
+        return gen_storeq(gen_address_a(ctx, imm), cpu_gpr[rt]);
+    case 0x238: /* STQR */
+        return gen_storeq(gen_address_a(ctx, ctx->pc + imm), cpu_gpr[rt]);
 
     case 0x418: /* ILH */
         imm &= 0xffff;
         imm |= imm << 16;
 	return gen_movi(cpu_gpr[rt], imm);
-    case 0x410: _(ILHU);
+    case 0x410: /* ILHU */
         imm <<= 16;
         return gen_movi(cpu_gpr[rt], imm);
-    case 0x408: _(IL);
+    case 0x408: /* IL */
         return gen_movi(cpu_gpr[rt], imm);
-    case 0x608: _(IOHL);
+    case 0x608: /* IOHL */
         load_temp_imm(temp, imm);
         gen_operate(tcg_gen_or_tl, cpu_gpr[rt], cpu_gpr[rt], temp);
         free_temp(temp);
         return NO_EXIT;
-    case 0x328: _(FSMBI);
+    case 0x328: /* FSMBI */
         tcg_gen_movi_tl(cpu_gpr[rt][0], expand_fsmbi(imm >> 12));
         tcg_gen_movi_tl(cpu_gpr[rt][1], expand_fsmbi(imm >> 8));
         tcg_gen_movi_tl(cpu_gpr[rt][2], expand_fsmbi(imm >> 4));
@@ -321,8 +375,13 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
     case 0x220: _(BRHZ);
 
     /* RR/RI7 Instruction Format (11-bit op).  */
-    case 0x388: _(LDX);
-    case 0x288: _(STQX);
+    case 0x388: /* LDX */
+        return gen_loadq(gen_address_x(ctx, cpu_gpr[ra][0], cpu_gpr[rb][0]),
+                         cpu_gpr[rt]);
+    case 0x288: /* STQX */
+        return gen_storeq(gen_address_x(ctx, cpu_gpr[ra][0], cpu_gpr[rb][0]),
+                          cpu_gpr[rt]);
+
     case 0x3e8: _(CBD);
     case 0x3a8: _(CBX);
     case 0x3ea: _(CHD);
