@@ -33,6 +33,29 @@ void QEMU_NORETURN helper_excp(int excp, int error)
     cpu_loop_exit(env);
 }
 
+uint32_t helper_clz(uint32_t arg)
+{
+    return clz32(arg);
+}
+
+uint32_t helper_cntb(uint32_t val)
+{
+    /* Like ctpop32, but don't fold the bytes together.  */
+    val = (val & 0x55555555) + ((val >> 1) & 0x55555555);
+    val = (val & 0x33333333) + ((val >> 2) & 0x33333333);
+    val = (val & 0x0f0f0f0f) + ((val >> 4) & 0x0f0f0f0f);
+    return val;
+}
+
+uint32_t helper_fsmb(uint32_t arg)
+{
+    uint32_t ret = 0;
+    ret |= (arg & 0x8000 ? 0xff000000 : 0);
+    ret |= (arg & 0x4000 ? 0x00ff0000 : 0);
+    ret |= (arg & 0x2000 ? 0x0000ff00 : 0);
+    ret |= (arg & 0x1000 ? 0x000000ff : 0);
+    return ret;
+}
 
 /*****************************************************************************/
 /* Softmmu support */
