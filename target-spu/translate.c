@@ -113,12 +113,74 @@ static ExitStatus gen_excp(DisasContext *ctx, int exception, int error_code)
     return EXIT_NORETURN;
 }
 
+static ExitStatus gen_movi(TCGv r[4], int32_t imm)
+{
+    tcg_gen_movi_i32(r[0], imm);
+    tcg_gen_movi_i32(r[1], imm);
+    tcg_gen_movi_i32(r[2], imm);
+    tcg_gen_movi_i32(r[3], imm);
+    return NO_EXIT;
+}
+
+static void load_temp_imm(TCGv temp[4], int32_t imm)
+{
+    temp[0] = tcg_const_tl(imm);
+    temp[1] = temp[0];
+    temp[2] = temp[0];
+    temp[3] = temp[0];
+}
+
+static void alloc_temp(TCGv temp[4])
+{
+    temp[0] = tcg_temp_new();
+    temp[1] = tcg_temp_new();
+    temp[2] = tcg_temp_new();
+    temp[3] = tcg_temp_new();
+}
+
+static void free_temp(TCGv temp[4])
+{
+    tcg_temp_free (temp[0]);
+    if (!TCGV_EQUAL (temp[0], temp[1])) {
+        tcg_temp_free (temp[1]);
+    }
+    if (!TCGV_EQUAL (temp[0], temp[2])) {
+        tcg_temp_free (temp[2]);
+    }
+    if (!TCGV_EQUAL (temp[0], temp[3])) {
+        tcg_temp_free (temp[3]);
+    }
+}
+
+static void gen_operate (void (*op)(TCGv, TCGv, TCGv),
+                         TCGv rt[4], TCGv ra[4], TCGv rb[4])
+{
+    op(rt[0], ra[0], rb[0]);
+    op(rt[1], ra[1], rb[1]);
+    op(rt[2], ra[2], rb[2]);
+    op(rt[3], ra[3], rb[3]);
+}
+
+static int32_t expand_fsmbi(int32_t imm4)
+{
+    int32_t i, ret = 0;
+
+    for (i = 3; i >= 0; --i) {
+        if ((imm4 >> i) & 1) {
+            ret |= 0xff;
+        }
+        ret <<= 8;
+    }
+    return ret;
+}
+
 #define _(X)  { qemu_log("Unimplemented insn: " #X "\n"); return NO_EXIT; }
 
 static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
 {
     unsigned op, rt, ra, rb, rc;
-    signed imm;
+    int32_t imm;
+    TCGv temp[4];
 
     /* Normally, RT is on the right, etc.  To be fixed up below as needed.  */
     rt = insn & 0x7f;
@@ -187,6 +249,7 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
 
     /* RI18 Instruction Format (7-bit op).  */
     case 0x420: _(ILA);
+        return gen_movi(cpu_gpr[rt], imm);
     case 0x100: _(HBRA);
     case 0x120: _(HBRR);
 
@@ -226,11 +289,28 @@ static ExitStatus translate_0 (DisasContext *ctx, uint32_t insn, int opwidth)
     case 0x338: _(LQR);
     case 0x208: _(STQA);
     case 0x238: _(STQR);
-    case 0x418: _(ILH);
+
+    case 0x418: /* ILH */
+        imm &= 0xffff;
+        imm |= imm << 16;
+	return gen_movi(cpu_gpr[rt], imm);
     case 0x410: _(ILHU);
+        imm <<= 16;
+        return gen_movi(cpu_gpr[rt], imm);
     case 0x408: _(IL);
+        return gen_movi(cpu_gpr[rt], imm);
     case 0x608: _(IOHL);
+        load_temp_imm(temp, imm);
+        gen_operate(tcg_gen_or_tl, cpu_gpr[rt], cpu_gpr[rt], temp);
+        free_temp(temp);
+        return NO_EXIT;
     case 0x328: _(FSMBI);
+        tcg_gen_movi_tl(cpu_gpr[rt][0], expand_fsmbi(imm >> 12));
+        tcg_gen_movi_tl(cpu_gpr[rt][1], expand_fsmbi(imm >> 8));
+        tcg_gen_movi_tl(cpu_gpr[rt][2], expand_fsmbi(imm >> 4));
+        tcg_gen_movi_tl(cpu_gpr[rt][3], expand_fsmbi(imm >> 0));
+        return NO_EXIT;
+
     case 0x320: _(BR);
     case 0x300: _(BRA);
     case 0x330: _(BRSL);
