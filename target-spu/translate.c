@@ -77,6 +77,11 @@ static char cpu_reg_names[128][4][8];
     unsigned rb = (insn >> 14) & 0x7f;	\
     qemu_log_mask(CPU_LOG_TB_IN_ASM, "%s\t$%d,$%d,$%d\n", INSN, rt, ra, rb)
 
+#define DISASS_RR1			\
+    unsigned rt = insn & 0x7f;		\
+    unsigned ra = (insn >> 7) & 0x7f;	\
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%s\t$%d,$%d\n", INSN, rt, ra)
+
 #define DISASS_RRR			\
     unsigned rt = (insn >> 21) & 0x7f;	\
     unsigned ra = (insn >> 7) & 0x7f;	\
@@ -169,6 +174,14 @@ static ExitStatus insn_##NAME(DisassContext *ctx, uint32_t insn)	\
 {									\
     DISASS_RR;								\
     foreach_op3(FN, cpu_gpr[rt], cpu_gpr[ra], cpu_gpr[rb]);		\
+    return NO_EXIT;							\
+}
+
+#define FOREACH_RR1(NAME, FN)						\
+static ExitStatus insn_##NAME(DisassContext *ctx, uint32_t insn)	\
+{									\
+    DISASS_RR1;								\
+    foreach_op2(FN, cpu_gpr[rt], cpu_gpr[ra]);				\
     return NO_EXIT;							\
 }
 
@@ -678,6 +691,66 @@ static void gen_mpyhhau(TCGv out, TCGv a, TCGv b)
 
 FOREACH_RR(mpyhhau, gen_mpyhhau)
 
+FOREACH_RR1(clz, gen_helper_clz)
+FOREACH_RR1(cntb, gen_helper_cntb)
+
+static ExitStatus insn_fsmb(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp = tcg_temp_new();
+    DISASS_RR1;
+
+    tcg_gen_mov_tl(temp, cpu_gpr[ra][0]);
+    gen_helper_fsmb(cpu_gpr[rt][0], temp);
+    tcg_gen_shli_tl(temp, temp, 4);
+    gen_helper_fsmb(cpu_gpr[rt][1], temp);
+    tcg_gen_shli_tl(temp, temp, 4);
+    gen_helper_fsmb(cpu_gpr[rt][2], temp);
+    tcg_gen_shli_tl(temp, temp, 4);
+    gen_helper_fsmb(cpu_gpr[rt][3], temp);
+
+    tcg_temp_free(temp);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_fsmh(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp = tcg_temp_new();
+    DISASS_RR1;
+
+    tcg_gen_mov_tl(temp, cpu_gpr[ra][0]);
+    gen_helper_fsmh(cpu_gpr[rt][0], temp);
+    tcg_gen_shli_tl(temp, temp, 2);
+    gen_helper_fsmh(cpu_gpr[rt][1], temp);
+    tcg_gen_shli_tl(temp, temp, 2);
+    gen_helper_fsmh(cpu_gpr[rt][2], temp);
+    tcg_gen_shli_tl(temp, temp, 2);
+    gen_helper_fsmh(cpu_gpr[rt][3], temp);
+
+    tcg_temp_free(temp);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_fsm(DisassContext *ctx, uint32_t insn)
+{
+    TCGv hold, test;
+    int i;
+    DISASS_RR1;
+
+    hold = tcg_temp_new();
+    test = tcg_temp_new();
+
+    tcg_gen_mov_tl(hold, cpu_gpr[ra][0]);
+    for (i = 0; i < 4; ++i) {
+        tcg_gen_shri_tl(test, hold, 3 - i);
+        tcg_gen_andi_tl(test, test, 1);
+        tcg_gen_neg_tl(cpu_gpr[rt][i], test);
+    }
+
+    tcg_temp_free(test);
+    tcg_temp_free(hold);
+    return NO_EXIT;
+}
+
 /* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
@@ -790,11 +863,11 @@ static insn_fn * const translate_table[0x1000] = {
     [0x79c] = insn_mpyhhu,
     [0x69c] = insn_mpyhhau,
 
-//  case 0x54a: _(CLZ);
-//  case 0x568: _(CNTB);
-//  case 0x36c: _(FSMB);
-//  case 0x36a: _(FSMH);
-//  case 0x368: _(FSM);
+    [0x54a] = insn_clz,
+    [0x568] = insn_cntb,
+    [0x36c] = insn_fsmb,
+    [0x36a] = insn_fsmh,
+    [0x368] = insn_fsm,
 //  case 0x364: _(GBB);
 //  case 0x362: _(GBH);
 //  case 0x360: _(GB);

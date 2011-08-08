@@ -57,6 +57,14 @@ uint32_t helper_fsmb(uint32_t arg)
     return ret;
 }
 
+uint32_t helper_fsmh(uint32_t arg)
+{
+    uint32_t ret = 0;
+    ret |= (arg & 0x80 ? 0xffff0000 : 0);
+    ret |= (arg & 0x40 ? 0x0000ffff : 0);
+    return ret;
+}
+
 /*****************************************************************************/
 /* Softmmu support */
 #if !defined (CONFIG_USER_ONLY)
