@@ -787,6 +787,10 @@ static ExitStatus insn_gb(DisassContext *ctx, uint32_t insn)
     return NO_EXIT;
 }
 
+FOREACH_RR(avgb, gen_helper_avgb)
+FOREACH_RR(absdb, gen_helper_absdb)
+FOREACH_RR(sumb, gen_helper_sumb)
+
 /* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
@@ -907,9 +911,9 @@ static insn_fn * const translate_table[0x1000] = {
     [0x364] = insn_gbb,
     [0x362] = insn_gbh,
     [0x360] = insn_gb,
-//  case 0x1a6: _(AVGB);
-//  case 0x0a6: _(ABSDB);
-//  case 0x4a6: _(SUMB);
+    [0x1a6] = insn_avgb,
+    [0x0a6] = insn_absdb,
+    [0x4a6] = insn_sumb,
 //  case 0x56c: _(XSBH);
 //  case 0x55c: _(XSHW);
 //  case 0x54c: _(XSWD);

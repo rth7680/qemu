@@ -108,6 +108,48 @@ uint32_t helper_gb(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3)
     return ret;
 }
 
+uint32_t helper_avgb(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0, i;
+    for (i = 0; i < 3; ++i) {
+        uint32_t ab, bb, rb;
+
+        ab = (a >> (i * 8)) & 0xff;
+        bb = (b >> (i * 8)) & 0xff;
+
+        rb = (ab + bb + 1) >> 1;
+
+        ret |= (rb & 0xff) << (i * 8);
+    }
+    return ret;
+}
+
+uint32_t helper_absdb(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0, i;
+    for (i = 0; i < 3; ++i) {
+        uint32_t ab, bb, rb;
+
+        ab = (a >> (i * 8)) & 0xff;
+        bb = (b >> (i * 8)) & 0xff;
+
+        rb = (bb > ab ? bb - ab : ab - bb);
+
+        ret |= rb << (i * 8);
+    }
+    return ret;
+}
+
+static inline uint32_t sumb_1(uint32_t val)
+{
+    return (val & 0xff) + ((val >> 8) & 0xff) + ((val >> 16) & 0xff) + (val >> 24);
+}
+
+uint32_t helper_sumb(uint32_t a, uint32_t b)
+{
+    return (sumb_1(b) << 16) + sumb_1(a);
+}
+
 /*****************************************************************************/
 /* Softmmu support */
 #if !defined (CONFIG_USER_ONLY)
