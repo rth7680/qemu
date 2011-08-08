@@ -65,6 +65,49 @@ uint32_t helper_fsmh(uint32_t arg)
     return ret;
 }
 
+static inline uint32_t gbb_1(uint32_t a)
+{
+    uint32_t ret = a & 1;
+    ret |= (a >> (8 - 1)) & 2;
+    ret |= (a >> (16 - 2)) & 4;
+    ret |= (a >> (24 - 3)) & 8;
+    return ret;
+}
+
+uint32_t helper_gbb(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3)
+{
+    uint32_t ret = 0;
+    ret |= gbb_1(a0) << 12;
+    ret |= gbb_1(a1) << 8;
+    ret |= gbb_1(a2) << 4;
+    ret |= gbb_1(a3) << 0;
+    return ret;
+}
+
+static inline uint32_t gbh_1(uint32_t a)
+{
+    return (a & 1) | ((a >> (16 - 1)) & 2);
+}
+
+uint32_t helper_gbh(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3)
+{
+    uint32_t ret = 0;
+    ret |= gbh_1(a0) << 6;
+    ret |= gbh_1(a1) << 4;
+    ret |= gbh_1(a2) << 2;
+    ret |= gbh_1(a3) << 0;
+    return ret;
+}
+
+uint32_t helper_gb(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3)
+{
+    uint32_t ret = a3 & 1;
+    ret |= (a2 & 1) << 1;
+    ret |= (a1 & 1) << 2;
+    ret |= (a0 & 1) << 3;
+    return ret;
+}
+
 /*****************************************************************************/
 /* Softmmu support */
 #if !defined (CONFIG_USER_ONLY)

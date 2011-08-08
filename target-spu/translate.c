@@ -751,6 +751,42 @@ static ExitStatus insn_fsm(DisassContext *ctx, uint32_t insn)
     return NO_EXIT;
 }
 
+static ExitStatus insn_gbb(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR1;
+
+    gen_helper_gbb(cpu_gpr[rt][0], cpu_gpr[ra][0], cpu_gpr[ra][1],
+                   cpu_gpr[ra][2], cpu_gpr[ra][3]);
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_gbh(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR1;
+
+    gen_helper_gbh(cpu_gpr[rt][0], cpu_gpr[ra][0], cpu_gpr[ra][1],
+                   cpu_gpr[ra][2], cpu_gpr[ra][3]);
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_gb(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR1;
+
+    gen_helper_gb(cpu_gpr[rt][0], cpu_gpr[ra][0], cpu_gpr[ra][1],
+                  cpu_gpr[ra][2], cpu_gpr[ra][3]);
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+    return NO_EXIT;
+}
+
 /* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
@@ -868,9 +904,9 @@ static insn_fn * const translate_table[0x1000] = {
     [0x36c] = insn_fsmb,
     [0x36a] = insn_fsmh,
     [0x368] = insn_fsm,
-//  case 0x364: _(GBB);
-//  case 0x362: _(GBH);
-//  case 0x360: _(GB);
+    [0x364] = insn_gbb,
+    [0x362] = insn_gbh,
+    [0x360] = insn_gb,
 //  case 0x1a6: _(AVGB);
 //  case 0x0a6: _(ABSDB);
 //  case 0x4a6: _(SUMB);
