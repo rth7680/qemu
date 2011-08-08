@@ -24,6 +24,16 @@
 #include "softfloat.h"
 #include "helper.h"
 
+/* Note that while the words in the register file are stored in the
+   correct memory order, the actual bytes are stored in host memory
+   order.  Xor BYTE_SWAP with a byte index into the register file to
+   get the bytes in target memory ordering.  */
+#ifdef HOST_WORDS_BIGENDIAN
+# define REG_BYTE_SWAP 0
+#else
+# define REG_BYTE_SWAP 3
+#endif
+
 /* This should only be called from translate, via gen_excp.
    We expect that ENV->PC has already been updated.  */
 void QEMU_NORETURN helper_excp(int excp, int error)
@@ -157,19 +167,10 @@ void helper_shufb(void *vt, void *va, void *vb, void *vc)
 {
     uint8_t *pa = va, *pb = vb, *pc = vc;
     uint8_t temp[16];
-    unsigned i, swap;
-
-    /* Note that while the words in the register file are stored in the
-       correct memory order, the actual bytes are stored in host memory
-       order.  Set up to frob the order in which we process bytes.  */
-#ifdef HOST_WORDS_BIGENDIAN
-    swap = 0;
-#else
-    swap = 3;
-#endif
+    unsigned i;
 
     for (i = 0; i < 16; ++i) {
-        uint8_t val, sel = pc[i ^ swap];
+        uint8_t val, sel = pc[i ^ REG_BYTE_SWAP];
         if ((sel & 0xc0) == 0x80) {
             val = 0;
         } else if ((sel & 0xe0) == 0xc0) {
@@ -177,12 +178,117 @@ void helper_shufb(void *vt, void *va, void *vb, void *vc)
         } else if ((sel & 0xe0) == 0xe0) {
             val = 0x80;
         } else {
-            val = (sel & 0x10 ? pb : pa)[(sel & 0xf) ^ swap];
+            val = (sel & 0x10 ? pb : pa)[(sel & 0xf) ^ REG_BYTE_SWAP];
         }
-        temp[i ^ swap] = val;
+        temp[i ^ REG_BYTE_SWAP] = val;
     }
 
     memcpy(vt, temp, 16);
+}
+
+uint32_t helper_shlh(uint32_t a, uint32_t b)
+{
+    unsigned countl, counth, shifth, shiftl;
+
+    countl = b & 0x1f;
+    counth = (b >> 16) & 0x1f;
+
+    shiftl = (a << countl) & 0xffff;
+    shifth = (a & 0xffff0000) << counth;
+
+    return shiftl | shifth;
+}
+
+void helper_shlqby(void *vt, void *va, uint32_t count)
+{
+    uint8_t *pa = va;
+    unsigned i;
+    uint8_t temp[16];
+
+    count &= 0x1f;
+    memset(temp, 0, 16);
+
+    for (i = 0; i + count < 16; ++i) {
+        temp[i ^ REG_BYTE_SWAP] = pa[(i + count) ^ REG_BYTE_SWAP];
+    }
+
+    memcpy(vt, temp, 16);
+}
+
+uint32_t helper_roth(uint32_t a, uint32_t b)
+{
+    unsigned countl, counth, roth, rotl;
+
+    countl = b & 0xf;
+    counth = (b >> 16) & 0xf;
+
+    rotl  = (a << countl) & 0xffff;
+    rotl |= (a & 0xffff) >> (16 - countl);
+
+    roth  = (a & 0xffff0000) << counth;
+    roth |= (a >> (16 - counth)) & 0xffff0000;
+
+    return rotl | roth;
+}
+
+void helper_rotqby(void *vt, void *va, uint32_t count)
+{
+    uint8_t *pa = va;
+    unsigned i;
+    uint8_t temp[16];
+
+    count &= 15;
+    for (i = 0; i < 16; ++i) {
+        temp[i ^ REG_BYTE_SWAP] = pa[((i + count) & 15) ^ REG_BYTE_SWAP];
+    }
+
+    memcpy(vt, temp, 16);
+}
+
+/* As indicated in the Programming Notes associated with all of the
+   Rotate and Mask instructions, these are logical right shifts 
+   with the shift count in two's compliment form.  */
+
+uint32_t helper_rothm(uint32_t a, uint32_t b)
+{
+    uint32_t countl, counth, shiftl, shifth;
+
+    countl = -b & 0x1f;
+    counth = -(b >> 16) & 0x1f;
+
+    shiftl = (a & 0xffff) >> countl;
+    shifth = (a >> counth) & 0xffff0000;
+
+    return shiftl | shifth;
+}
+
+void helper_rotqmby(void *vt, void *va, uint32_t count)
+{
+    uint8_t *pa = va;
+    unsigned i;
+    uint8_t temp[16];
+
+    count &= 0x1f;
+    memset(temp, 0, 16);
+
+    for (i = 0; i + count < 16; ++i) {
+        temp[(i + count) ^ REG_BYTE_SWAP] = pa[i ^ REG_BYTE_SWAP];
+    }
+
+    memcpy(vt, temp, 16);
+}
+
+uint32_t helper_rotmah(uint32_t a, uint32_t b)
+{
+    uint32_t countl, counth, shiftl, shifth;
+
+    countl = -b & 0x1f;
+    counth = -(b >> 16) & 0x1f;
+
+    shiftl = ((int16_t)a) >> countl;
+    shifth = ((int32_t)a >> counth) & 0xffff0000;
+
+    return shiftl | shifth;
 }
 
 /*****************************************************************************/
