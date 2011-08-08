@@ -142,12 +142,47 @@ uint32_t helper_absdb(uint32_t a, uint32_t b)
 
 static inline uint32_t sumb_1(uint32_t val)
 {
-    return (val & 0xff) + ((val >> 8) & 0xff) + ((val >> 16) & 0xff) + (val >> 24);
+    return ((val & 0xff)
+            + ((val >> 8) & 0xff)
+            + ((val >> 16) & 0xff)
+            + (val >> 24));
 }
 
 uint32_t helper_sumb(uint32_t a, uint32_t b)
 {
     return (sumb_1(b) << 16) + sumb_1(a);
+}
+
+void helper_shufb(void *vt, void *va, void *vb, void *vc)
+{
+    uint8_t *pa = va, *pb = vb, *pc = vc;
+    uint8_t temp[16];
+    unsigned i, swap;
+
+    /* Note that while the words in the register file are stored in the
+       correct memory order, the actual bytes are stored in host memory
+       order.  Set up to frob the order in which we process bytes.  */
+#ifdef HOST_WORDS_BIGENDIAN
+    swap = 0;
+#else
+    swap = 3;
+#endif
+
+    for (i = 0; i < 16; ++i) {
+        uint8_t val, sel = pc[i ^ swap];
+        if ((sel & 0xc0) == 0x80) {
+            val = 0;
+        } else if ((sel & 0xe0) == 0xc0) {
+            val = 0xff;
+        } else if ((sel & 0xe0) == 0xe0) {
+            val = 0x80;
+        } else {
+            val = (sel & 0x10 ? pb : pa)[(sel & 0xf) ^ swap];
+        }
+        temp[i ^ swap] = val;
+    }
+
+    memcpy(vt, temp, 16);
 }
 
 /*****************************************************************************/

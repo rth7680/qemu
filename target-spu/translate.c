@@ -131,15 +131,15 @@ static void alloc_temp(TCGv temp[4])
 
 static void free_temp(TCGv temp[4])
 {
-    tcg_temp_free (temp[0]);
-    if (!TCGV_EQUAL (temp[0], temp[1])) {
-        tcg_temp_free (temp[1]);
+    tcg_temp_free(temp[0]);
+    if (!TCGV_EQUAL(temp[0], temp[1])) {
+        tcg_temp_free(temp[1]);
     }
-    if (!TCGV_EQUAL (temp[0], temp[2])) {
-        tcg_temp_free (temp[2]);
+    if (!TCGV_EQUAL(temp[0], temp[2])) {
+        tcg_temp_free(temp[2]);
     }
-    if (!TCGV_EQUAL (temp[0], temp[3])) {
-        tcg_temp_free (temp[3]);
+    if (!TCGV_EQUAL(temp[0], temp[3])) {
+        tcg_temp_free(temp[3]);
     }
 }
 
@@ -848,6 +848,48 @@ FOREACH_RR(nand, tcg_gen_nand_tl)
 FOREACH_RR(nor, tcg_gen_nor_tl)
 FOREACH_RR(eqv, tcg_gen_eqv_tl)
 
+static void gen_selb(TCGv out, TCGv a, TCGv b, TCGv c)
+{
+    TCGv temp = tcg_temp_new();
+
+    tcg_gen_and_tl(temp, b, c);
+    tcg_gen_andc_tl(out, a, c);
+    tcg_gen_or_tl(out, out, temp);
+
+    tcg_temp_free(temp);
+}
+
+FOREACH_RRR(selb, gen_selb)
+
+static ExitStatus insn_shufb(DisassContext *ctx, uint32_t insn)
+{
+    TCGv_ptr pt, pa, pb, pc;
+    DISASS_RRR;
+
+    /* The only way to avoid the global state change is to pass three
+       complete vectors to a function and return an entire vector.
+       Which we cannot do with TCG.  Pass pointers to the vectors instead.  */
+    /* ??? We could get away with just passing INSN as a constant and
+       re-extracting the register numbers in the helper.  That would be
+       more efficient on the TCG side.  */
+    pt = tcg_temp_new_ptr();
+    pa = tcg_temp_new_ptr();
+    pb = tcg_temp_new_ptr();
+    pc = tcg_temp_new_ptr();
+    tcg_gen_addi_ptr(pt, cpu_env, rt * 16);
+    tcg_gen_addi_ptr(pt, cpu_env, ra * 16);
+    tcg_gen_addi_ptr(pt, cpu_env, rb * 16);
+    tcg_gen_addi_ptr(pt, cpu_env, rc * 16);
+
+    gen_helper_shufb(pt, pa, pb, pc);
+
+    tcg_temp_free_ptr(pt);
+    tcg_temp_free_ptr(pa);
+    tcg_temp_free_ptr(pb);
+    tcg_temp_free_ptr(pc);
+    return NO_EXIT;
+}
+
 /* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
@@ -860,11 +902,11 @@ typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
    make up 5 hexidecimal digits.  */
 static insn_fn * const translate_table[0x1000] = {
     /* RRR Instruction Format (4-bit op).  */
+    [0x800] = insn_selb,
+    [0xb00] = insn_shufb,
     [0xc00] = insn_mpya,
-//  case 0x800: _(SELB);
-//  case 0xb00: _(SHUFB);
-//  case 0xe00: _(FMA);
 //  case 0xd00: _(FNMS);
+//  case 0xe00: _(FMA);
 //  case 0xf00: _(FMS);
 
     /* RI18 Instruction Format (7-bit op).  */
