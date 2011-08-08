@@ -193,16 +193,19 @@ static ExitStatus insn_##NAME(DisassContext *ctx, uint32_t insn)	\
     return NO_EXIT;							\
 }
 
-#define FOREACH_RI10(NAME, FN)						\
+#define FOREACH_RI10_ADJ(NAME, FN, ADJUST_IMM)				\
 static ExitStatus insn_##NAME(DisassContext *ctx, uint32_t insn)	\
 {									\
     TCGv temp[4];							\
     DISASS_RI10;							\
+    ADJUST_IMM;                                                         \
     load_temp_imm(temp, imm);						\
     foreach_op3(FN, cpu_gpr[rt], cpu_gpr[ra], temp);			\
     free_temp(temp);							\
     return NO_EXIT;							\
 }
+
+#define FOREACH_RI10(NAME, FN)  FOREACH_RI10_ADJ(NAME, FN, )
 
 static void gen_excp_1(int exception, int error_code)
 {
@@ -811,6 +814,40 @@ static ExitStatus insn_xswd(DisassContext *ctx, uint32_t insn)
     return NO_EXIT;
 }
 
+FOREACH_RR(and, tcg_gen_and_tl)
+FOREACH_RR(andc, tcg_gen_andc_tl)
+FOREACH_RI10_ADJ(andbi, tcg_gen_and_tl, imm &= 0xff; imm *= 0x01010101)
+FOREACH_RI10_ADJ(andhi, tcg_gen_and_tl, imm &= 0xffff; imm |= imm << 16)
+FOREACH_RI10(andi, tcg_gen_and_tl)
+
+FOREACH_RR(or, tcg_gen_or_tl)
+FOREACH_RR(orc, tcg_gen_orc_tl)
+FOREACH_RI10_ADJ(orbi, tcg_gen_or_tl, imm &= 0xff; imm *= 0x01010101)
+FOREACH_RI10_ADJ(orhi, tcg_gen_or_tl, imm &= 0xffff; imm |= imm << 16)
+FOREACH_RI10(ori, tcg_gen_or_tl)
+
+static ExitStatus insn_orx(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR1;
+
+    tcg_gen_or_tl(cpu_gpr[rt][0], cpu_gpr[ra][0], cpu_gpr[ra][1]);
+    tcg_gen_or_tl(cpu_gpr[rt][0], cpu_gpr[rt][0], cpu_gpr[ra][2]);
+    tcg_gen_or_tl(cpu_gpr[rt][0], cpu_gpr[rt][0], cpu_gpr[ra][3]);
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+    return NO_EXIT;
+}
+
+FOREACH_RR(xor, tcg_gen_xor_tl)
+FOREACH_RI10_ADJ(xorbi, tcg_gen_xor_tl, imm &= 0xff; imm *= 0x01010101)
+FOREACH_RI10_ADJ(xorhi, tcg_gen_xor_tl, imm &= 0xffff; imm |= imm << 16)
+FOREACH_RI10(xori, tcg_gen_xor_tl)
+
+FOREACH_RR(nand, tcg_gen_nand_tl)
+FOREACH_RR(nor, tcg_gen_nor_tl)
+FOREACH_RR(eqv, tcg_gen_eqv_tl)
+
 /* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
@@ -847,15 +884,16 @@ static insn_fn * const translate_table[0x1000] = {
     [0x740] = insn_mpyi,
     [0x750] = insn_mpyui,
 
-//  case 0x160: _(ANDBI);
-//  case 0x150: _(ANDHI);
-//  case 0x140: _(ANDI);
-//  case 0x060: _(ORBI);
-//  case 0x050: _(ORHI);
-//  case 0x040: _(ORI);
-//  case 0x460: _(XORBI);
-//  case 0x450: _(XORHI);
-//  case 0x440: _(XORI);
+    [0x160] = insn_andbi,
+    [0x150] = insn_andhi,
+    [0x140] = insn_andi,
+    [0x060] = insn_orbi,
+    [0x050] = insn_orhi,
+    [0x040] = insn_ori,
+    [0x460] = insn_xorbi,
+    [0x450] = insn_xorhi,
+    [0x440] = insn_xori,
+
 //  case 0x7f0: _(HEQI);
 //  case 0x4f0: _(HGTI);
 //  case 0x5f0: _(HLGTI);
@@ -937,15 +975,16 @@ static insn_fn * const translate_table[0x1000] = {
     [0x56c] = insn_xsbh,
     [0x55c] = insn_xshw,
     [0x54c] = insn_xswd,
-//  case 0x182: _(AND);
-//  case 0x582: _(ANDC);
-//  case 0x082: _(OR);
-//  case 0x592: _(ORC);
-//  case 0x3e0: _(ORX);
-//  case 0x482: _(XOR);
-//  case 0x192: _(NAND);
-//  case 0x092: _(NOR);
-//  case 0x492: _(EQV);
+    [0x182] = insn_and,
+    [0x582] = insn_andc,
+    [0x082] = insn_or,
+    [0x592] = insn_orc,
+    [0x3e0] = insn_orx,
+    [0x482] = insn_xor,
+    [0x192] = insn_nand,
+    [0x092] = insn_nor,
+    [0x492] = insn_eqv,
+
 //  case 0x0be: _(SHLH);
 //  case 0x0fe: _(SHLHI);
 //  case 0x0b6: _(SHL);
