@@ -386,25 +386,23 @@ static ExitStatus insn_fsmbi(DisassContext *ctx, uint32_t insn)
 }
 
 /* ---------------------------------------------------------------------- */
-/* Section 4: Constant Formation Instructions.  */
+/* Section 4: Integer and Logical Instructions.  */
 
 static void gen_addh(TCGv out, TCGv a, TCGv b)
 {
-    TCGv oh, ah, bh;
+    TCGv high = tcg_temp_new();
+    TCGv low = tcg_temp_new();
 
-    oh = tcg_temp_new();
-    ah = tcg_temp_new();
-    bh = tcg_temp_new();
+    tcg_gen_add_tl(low, a, b);
 
-    tcg_gen_shri_tl(ah, a, 16);
-    tcg_gen_shri_tl(bh, b, 16);
-    tcg_gen_add_tl(out, a, b);
-    tcg_gen_add_tl(oh, ah, bh);
-    tcg_gen_deposit_tl(out, out, oh, 16, 16);
+    /* By zapping low half of A, we guarantee no carry into high
+       without having to fiddle B.  That will get done in DEPOSIT.  */
+    tcg_gen_andi_tl(high, a, 0xffff0000);
+    tcg_gen_add_tl(out, high, b);
+    tcg_gen_deposit_tl(out, out, low, 0, 16);
 
-    tcg_temp_free(oh);
-    tcg_temp_free(ah);
-    tcg_temp_free(bh);
+    tcg_temp_free(high);
+    tcg_temp_free(low);
 }
 
 FOREACH_RR(ah, gen_addh)
@@ -415,21 +413,17 @@ FOREACH_RI10(ai, tcg_gen_add_tl)
 
 static void gen_sfh(TCGv out, TCGv a, TCGv b)
 {
-    TCGv oh, ah, bh;
+    TCGv high = tcg_temp_new();
+    TCGv low = tcg_temp_new();
 
-    oh = tcg_temp_new();
-    ah = tcg_temp_new();
-    bh = tcg_temp_new();
+    tcg_gen_sub_tl(low, b, a);
 
-    tcg_gen_shri_tl(ah, a, 16);
-    tcg_gen_shri_tl(bh, b, 16);
-    tcg_gen_sub_tl(out, b, a);
-    tcg_gen_sub_tl(oh, bh, ah);
-    tcg_gen_deposit_tl(out, out, oh, 16, 16);
+    tcg_gen_andi_tl(high, a, 0xffff0000);
+    tcg_gen_sub_tl(out, b, high);
+    tcg_gen_deposit_tl(out, out, low, 0, 16);
 
-    tcg_temp_free(oh);
-    tcg_temp_free(ah);
-    tcg_temp_free(bh);
+    tcg_temp_free(high);
+    tcg_temp_free(low);
 }
 
 FOREACH_RR(sfh, gen_sfh)
@@ -791,6 +785,32 @@ FOREACH_RR(avgb, gen_helper_avgb)
 FOREACH_RR(absdb, gen_helper_absdb)
 FOREACH_RR(sumb, gen_helper_sumb)
 
+static void gen_xsbh(TCGv out, TCGv in)
+{
+    TCGv temp = tcg_temp_new();
+
+    tcg_gen_ext8s_tl(temp, in);
+    tcg_gen_shli_tl(out, in, 8);
+    tcg_gen_sari_tl(out, out, 8);
+    tcg_gen_deposit_tl(out, out, temp, 0, 16);
+
+    tcg_temp_free(temp);
+}
+
+FOREACH_RR1(xsbh, gen_xsbh)
+FOREACH_RR1(xshw, tcg_gen_ext16s_tl)
+
+static ExitStatus insn_xswd(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR1;
+
+    tcg_gen_sari_tl(cpu_gpr[rt][0], cpu_gpr[ra][1], 31);
+    tcg_gen_mov_tl(cpu_gpr[rt][1], cpu_gpr[ra][1]);
+    tcg_gen_sari_tl(cpu_gpr[rt][2], cpu_gpr[ra][3], 31);
+    tcg_gen_mov_tl(cpu_gpr[rt][3], cpu_gpr[ra][3]);
+    return NO_EXIT;
+}
+
 /* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
@@ -914,9 +934,9 @@ static insn_fn * const translate_table[0x1000] = {
     [0x1a6] = insn_avgb,
     [0x0a6] = insn_absdb,
     [0x4a6] = insn_sumb,
-//  case 0x56c: _(XSBH);
-//  case 0x55c: _(XSHW);
-//  case 0x54c: _(XSWD);
+    [0x56c] = insn_xsbh,
+    [0x55c] = insn_xshw,
+    [0x54c] = insn_xswd,
 //  case 0x182: _(AND);
 //  case 0x582: _(ANDC);
 //  case 0x082: _(OR);
