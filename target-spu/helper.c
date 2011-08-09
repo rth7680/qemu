@@ -23,8 +23,12 @@
 int cpu_spu_handle_mmu_fault (CPUState *env, target_ulong address, int rw,
                               int mmu_idx, int is_softmmu)
 {
-    env->exception_index = EXCP_MMFAULT;
-    return 1;
+#ifndef CONFIG_USER_ONLY
+    address &= TARGET_PAGE_MASK;
+    tlb_set_page(env, address, address, PAGE_READ | PAGE_WRITE | PAGE_EXEC,
+                 mmu_idx, TARGET_PAGE_SIZE);
+#endif
+    return 0;
 }
 
 target_phys_addr_t cpu_get_phys_page_debug(CPUState *env, target_ulong addr)

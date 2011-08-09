@@ -409,6 +409,7 @@ static void do_unaligned_access(target_ulong addr, int is_write,
 
 void tlb_fill (target_ulong addr, int is_write, int mmu_idx, void *retaddr)
 {
-    abort();
+    cpu_spu_handle_mmu_fault(cpu_single_env, addr, is_write, mmu_idx, 1);
+    /* SPU cannot memory fault.  */
 }
 #endif
