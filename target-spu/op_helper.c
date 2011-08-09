@@ -121,7 +121,7 @@ uint32_t helper_gb(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3)
 uint32_t helper_avgb(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0, i;
-    for (i = 0; i < 3; ++i) {
+    for (i = 0; i < 4; ++i) {
         uint32_t ab, bb, rb;
 
         ab = (a >> (i * 8)) & 0xff;
@@ -137,7 +137,7 @@ uint32_t helper_avgb(uint32_t a, uint32_t b)
 uint32_t helper_absdb(uint32_t a, uint32_t b)
 {
     uint32_t ret = 0, i;
-    for (i = 0; i < 3; ++i) {
+    for (i = 0; i < 4; ++i) {
         uint32_t ab, bb, rb;
 
         ab = (a >> (i * 8)) & 0xff;
@@ -289,6 +289,94 @@ uint32_t helper_rotmah(uint32_t a, uint32_t b)
     shifth = ((int32_t)a >> counth) & 0xffff0000;
 
     return shiftl | shifth;
+}
+
+uint32_t helper_ceqb(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0, i;
+    for (i = 0; i < 4; ++i) {
+        uint32_t ab, bb, rb;
+
+        ab = (a >> (i * 8)) & 0xff;
+        bb = (b >> (i * 8)) & 0xff;
+
+        rb = (ab == bb ? 0xff : 0);
+
+        ret |= rb << (i * 8);
+    }
+    return ret;
+}
+
+uint32_t helper_cgtb(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0, i;
+    for (i = 0; i < 4; ++i) {
+        int32_t ab, bb, rb;
+
+        ab = (int8_t)(a >> (i * 8));
+        bb = (int8_t)(b >> (i * 8));
+
+        rb = (ab > bb ? 0xff : 0);
+
+        ret |= rb << (i * 8);
+    }
+    return ret;
+}
+
+uint32_t helper_clgtb(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0, i;
+    for (i = 0; i < 4; ++i) {
+        uint32_t ab, bb, rb;
+
+        ab = (a >> (i * 8)) & 0xff;
+        bb = (b >> (i * 8)) & 0xff;
+
+        rb = (ab > bb ? 0xff : 0);
+
+        ret |= rb << (i * 8);
+    }
+    return ret;
+}
+
+uint32_t helper_ceqh(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0;
+    ret |= ((a ^ b) & 0xffff ? 0 : 0xffff);
+    ret |= ((a ^ b) & 0xffff0000 ? 0 : 0xffff0000);
+    return ret;
+}
+
+uint32_t helper_cgth(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0;
+    int16_t ah, bh;
+
+    ah = a;
+    bh = b;
+    ret |= (ah > bh ? 0xffff : 0);
+
+    ah = a >> 16;
+    bh = a >> 16;
+    ret |= (ah > bh ? 0xffff0000 : 0);
+
+    return ret;
+}
+
+uint32_t helper_clgth(uint32_t a, uint32_t b)
+{
+    uint32_t ret = 0;
+    uint16_t ah, bh;
+
+    ah = a;
+    bh = b;
+    ret |= (ah > bh ? 0xffff : 0);
+
+    ah = a >> 16;
+    bh = a >> 16;
+    ret |= (ah > bh ? 0xffff0000 : 0);
+
+    return ret;
 }
 
 /*****************************************************************************/

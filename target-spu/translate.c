@@ -1497,6 +1497,113 @@ static ExitStatus insn_rotmai(DisassContext *ctx, uint32_t insn)
 }
 
 /* ---------------------------------------------------------------------- */
+/* Section 7: Compare, Branch, and Halt Instructions.  */
+
+static ExitStatus gen_halt_cond(DisassContext *ctx, TCGCond c, TCGv a, TCGv b)
+{
+    int lab_over = gen_new_label();
+
+    tcg_gen_brcond_tl(tcg_invert_cond(c), a, b, lab_over);
+    gen_excp(ctx, EXCP_HALT, 0);
+
+    gen_set_label(lab_over);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_heq(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR;
+
+    (void)rt;
+    return gen_halt_cond(ctx, TCG_COND_EQ, cpu_gpr[ra][0], cpu_gpr[rb][0]);
+}
+
+static ExitStatus insn_heqi(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RI10;
+
+    (void)rt;
+    return gen_halt_cond(ctx, TCG_COND_EQ, cpu_gpr[ra][0], tcg_const_tl(imm));
+}
+
+static ExitStatus insn_hgt(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR;
+
+    (void)rt;
+    return gen_halt_cond(ctx, TCG_COND_GT, cpu_gpr[ra][0], cpu_gpr[rb][0]);
+}
+
+static ExitStatus insn_hgti(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RI10;
+
+    (void)rt;
+    return gen_halt_cond(ctx, TCG_COND_GT, cpu_gpr[ra][0], tcg_const_tl(imm));
+}
+
+static ExitStatus insn_hlgt(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR;
+
+    (void)rt;
+    return gen_halt_cond(ctx, TCG_COND_GTU, cpu_gpr[ra][0], cpu_gpr[rb][0]);
+}
+
+static ExitStatus insn_hlgti(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RI10;
+
+    (void)rt;
+    return gen_halt_cond(ctx, TCG_COND_GTU, cpu_gpr[ra][0], tcg_const_tl(imm));
+}
+
+FOREACH_RR(ceqb, gen_helper_ceqb)
+FOREACH_RI10_ADJ(ceqbi, gen_helper_ceqb, imm &= 0xff; imm *= 0x01010101)
+
+FOREACH_RR(ceqh, gen_helper_ceqh)
+FOREACH_RI10_ADJ(ceqhi, gen_helper_ceqh, imm &= 0xffff; imm |= imm << 16)
+
+static void gen_ceq(TCGv out, TCGv a, TCGv b)
+{
+    tcg_gen_setcond_tl(TCG_COND_EQ, out, a, b);
+    tcg_gen_neg_tl(out, out);
+}
+
+FOREACH_RR(ceq, gen_ceq)
+FOREACH_RI10(ceqi, gen_ceq)
+
+FOREACH_RR(cgtb, gen_helper_cgtb)
+FOREACH_RI10_ADJ(cgtbi, gen_helper_cgtb, imm &=0xff; imm *= 0x01010101)
+
+FOREACH_RR(cgth, gen_helper_cgth)
+FOREACH_RI10_ADJ(cgthi, gen_helper_cgth, imm &= 0xffff; imm |= imm << 16)
+
+static void gen_cgt(TCGv out, TCGv a, TCGv b)
+{
+    tcg_gen_setcond_tl(TCG_COND_GT, out, a, b);
+    tcg_gen_neg_tl(out, out);
+}
+
+FOREACH_RR(cgt, gen_cgt)
+FOREACH_RI10(cgti, gen_cgt)
+
+FOREACH_RR(clgtb, gen_helper_clgtb)
+FOREACH_RI10_ADJ(clgtbi, gen_helper_clgtb, imm &=0xff; imm *= 0x01010101)
+
+FOREACH_RR(clgth, gen_helper_clgth)
+FOREACH_RI10_ADJ(clgthi, gen_helper_clgth, imm &=0xffff;imm |= imm << 16)
+
+static void gen_clgt(TCGv out, TCGv a, TCGv b)
+{
+    tcg_gen_setcond_tl(TCG_COND_GTU, out, a, b);
+    tcg_gen_neg_tl(out, out);
+}
+
+FOREACH_RR(clgt, gen_clgt)
+FOREACH_RI10(clgti, gen_clgt)
+
+/* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
 
@@ -1542,18 +1649,18 @@ static insn_fn * const translate_table[0x1000] = {
     [0x450] = insn_xorhi,
     [0x440] = insn_xori,
 
-//  case 0x7f0: _(HEQI);
-//  case 0x4f0: _(HGTI);
-//  case 0x5f0: _(HLGTI);
-//  case 0x7e0: _(CEQBI);
-//  case 0x7d0: _(CEQHI);
-//  case 0x7c0: _(CEQI);
-//  case 0x4e0: _(CGTBI);
-//  case 0x4d0: _(CGTHI);
-//  case 0x4c0: _(CGTI);
-//  case 0x5e0: _(CLGTBI);
-//  case 0x5d0: _(CLGTHI);
-//  case 0x5c0: _(CLGTI);
+    [0x7f0] = insn_heqi,
+    [0x4f0] = insn_hgti,
+    [0x5f0] = insn_hlgti,
+    [0x7e0] = insn_ceqbi,
+    [0x7d0] = insn_ceqhi,
+    [0x7c0] = insn_ceqi,
+    [0x4e0] = insn_cgtbi,
+    [0x4d0] = insn_cgthi,
+    [0x4c0] = insn_cgti,
+    [0x5e0] = insn_clgtbi,
+    [0x5d0] = insn_clgthi,
+    [0x5c0] = insn_clgti,
 
     /* RI16 Instruction Format (9-bit op).  */
     [0x308] = insn_lqa,
@@ -1665,18 +1772,18 @@ static insn_fn * const translate_table[0x1000] = {
     [0x0b4] = insn_rotma,
     [0x0f4] = insn_rotmai,
 
-//  case 0x7b0: _(HEQ);
-//  case 0x2b0: _(HGT);
-//  case 0x5b0: _(HLGT);
-//  case 0x7a0: _(CEQB);
-//  case 0x790: _(CEQH);
-//  case 0x780: _(CEQ);
-//  case 0x4a0: _(CGTB);
-//  case 0x490: _(CGTH);
-//  case 0x480: _(CGT);
-//  case 0x5a0: _(CLGTB);
-//  case 0x590: _(CLGTH);
-//  case 0x580: _(CLGT);
+    [0x7b0] = insn_heq,
+    [0x2b0] = insn_hgt,
+    [0x5b0] = insn_hlgt,
+    [0x7a0] = insn_ceqb,
+    [0x790] = insn_ceqh,
+    [0x780] = insn_ceq,
+    [0x4a0] = insn_cgtb,
+    [0x490] = insn_cgth,
+    [0x480] = insn_cgt,
+    [0x5a0] = insn_clgtb,
+    [0x590] = insn_clgth,
+    [0x580] = insn_clgt,
 //  case 0x3a0: _(BI);
 //  case 0x354: _(IRET);
 //  case 0x356: _(BISLED);
