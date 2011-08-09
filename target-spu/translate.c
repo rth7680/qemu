@@ -33,6 +33,7 @@ typedef struct {
     struct TranslationBlock *tb;
     uint32_t pc;
     uint32_t lslr;
+    bool singlestep;
 } DisassContext;
 
 /* Return values from translate_one, indicating the state of the TB.
@@ -61,6 +62,8 @@ typedef enum {
 /* Global registers.  */
 static TCGv_ptr cpu_env;
 static TCGv cpu_pc;
+static TCGv cpu_srr0;
+static TCGv cpu_inte;
 static TCGv cpu_gpr[128][4];
 
 /* register names */
@@ -81,6 +84,21 @@ static char cpu_reg_names[128][4][8];
     unsigned rt = insn & 0x7f;		\
     unsigned ra = (insn >> 7) & 0x7f;	\
     qemu_log_mask(CPU_LOG_TB_IN_ASM, "%s\t$%d,$%d\n", INSN, rt, ra)
+
+#define DISASS_RR_BIRR			\
+    unsigned rt = insn & 0x7f;		\
+    unsigned ra = (insn >> 7) & 0x7f;	\
+    unsigned rb = (insn >> 14) & 0x7f;	\
+    int enadis = (rb & 0x20 ? -1 : rb & 0x10 ? 1 : 0); \
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%s%s\t$%d,$%d\n", \
+                  INSN, (enadis < 0 ? "d" : enadis > 0 ? "e" : ""), rt, ra)
+
+#define DISASS_RR_BIR			\
+    unsigned ra = (insn >> 7) & 0x7f;	\
+    unsigned rb = (insn >> 14) & 0x7f;	\
+    int enadis = (rb & 0x20 ? -1 : rb & 0x10 ? 1 : 0); \
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%s%s\t$%d\n", \
+                  INSN, (enadis < 0 ? "d" : enadis > 0 ? "e" : ""), ra)
 
 #define DISASS_RRR			\
     unsigned rt = (insn >> 21) & 0x7f;	\
@@ -106,6 +124,10 @@ static char cpu_reg_names[128][4][8];
     unsigned rt = insn & 0x7f;		\
     int32_t imm = (int32_t)(insn << 9) >> 16; \
     qemu_log_mask(CPU_LOG_TB_IN_ASM, "%s\t$%d,%d\n", INSN, rt, imm)
+
+#define DISASS_I16			\
+    int32_t imm = (int32_t)(insn << 9) >> 16; \
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%s\t%d\n", INSN, imm)
 
 #define DISASS_RI18			\
     unsigned rt = insn & 0x7f;		\
@@ -244,22 +266,22 @@ static ExitStatus gen_excp(DisassContext *ctx, int exception, int error_code)
 
 static TCGv gen_address_a(DisassContext *ctx, uint32_t a)
 {
-    return tcg_const_tl(a & ctx->lslr);
+    return tcg_const_tl(a & ctx->lslr & ~0xf);
 }
 
 static TCGv gen_address_x(DisassContext *ctx, TCGv a, TCGv b)
 {
     TCGv addr = tcg_temp_new();
     tcg_gen_add_tl(addr, a, b);
-    tcg_gen_andi_tl(addr, addr, ctx->lslr);
+    tcg_gen_andi_tl(addr, addr, ctx->lslr & ~0xf);
     return addr;
 }
 
 static TCGv gen_address_d(DisassContext *ctx, TCGv a, int32_t disp)
 {
     TCGv addr = tcg_temp_new();
-    tcg_gen_addi_tl(addr, a, disp & ctx->lslr);
-    tcg_gen_andi_tl(addr, addr, ctx->lslr);
+    tcg_gen_addi_tl(addr, a, disp & ctx->lslr & ~0xf);
+    tcg_gen_andi_tl(addr, addr, ctx->lslr & ~0xf);
     return addr;
 }
 
@@ -1603,6 +1625,241 @@ static void gen_clgt(TCGv out, TCGv a, TCGv b)
 FOREACH_RR(clgt, gen_clgt)
 FOREACH_RI10(clgti, gen_clgt)
 
+static bool use_goto_tb(DisassContext *ctx, uint32_t dest)
+{
+    /* Check for the dest on the same page as the start of the TB.  We
+       also want to suppress goto_tb in the case of single-steping and IO.  */
+    return (((ctx->tb->pc ^ dest) & TARGET_PAGE_MASK) == 0
+            && !ctx->singlestep
+            && !(ctx->tb->cflags & CF_LAST_IO));
+}
+
+static void gen_set_link(DisassContext *ctx, unsigned rt)
+{
+    tcg_gen_movi_tl(cpu_gpr[rt][0], (ctx->pc + 4) & ctx->lslr);
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+}
+
+static ExitStatus gen_bdirect(DisassContext *ctx, uint32_t dest)
+{
+    if (use_goto_tb(ctx, dest)) {
+        tcg_gen_goto_tb(0);
+        tcg_gen_movi_tl(cpu_pc, dest);
+        tcg_gen_exit_tb((tcg_target_long)ctx->tb);
+        return EXIT_GOTO_TB;
+    } else {
+        tcg_gen_movi_tl(cpu_pc, dest);
+        return EXIT_PC_UPDATED;
+    }
+}
+
+static ExitStatus gen_bindirect(DisassContext *ctx, TCGv dest, int enadis)
+{
+    if (enadis != 0) {
+        tcg_gen_movi_tl(cpu_inte, (enadis > 0));
+    }
+    tcg_gen_andi_tl(cpu_pc, dest, ctx->lslr & -4);
+    return EXIT_PC_UPDATED;
+}
+
+static ExitStatus gen_bcond_dir(DisassContext *ctx, TCGCond cond,
+                                TCGv cmp, uint32_t dest)
+{
+    int lab_true = gen_new_label();
+
+    if (use_goto_tb(ctx, dest)) {
+        tcg_gen_brcondi_tl(cond, cmp, 0, lab_true);
+
+        tcg_gen_goto_tb(0);
+        tcg_gen_movi_tl(cpu_pc, (ctx->pc + 4) & ctx->lslr);
+        tcg_gen_exit_tb((tcg_target_long)ctx->tb);
+
+        gen_set_label(lab_true);
+        tcg_gen_goto_tb(1);
+        tcg_gen_movi_tl(cpu_pc, dest);
+        tcg_gen_exit_tb((tcg_target_long)ctx->tb + 1);
+
+        return EXIT_GOTO_TB;
+    } else {
+        int lab_over = gen_new_label();
+
+        tcg_gen_brcondi_tl(cond, cmp, 0, lab_true);
+        tcg_gen_movi_tl(cpu_pc, (ctx->pc + 4) & ctx->lslr);
+        tcg_gen_br(lab_over);
+        gen_set_label(lab_true);
+        tcg_gen_movi_tl(cpu_pc, dest);
+        gen_set_label(lab_over);
+
+        return EXIT_PC_UPDATED;
+    }
+}
+
+static ExitStatus gen_bcond_ind(DisassContext *ctx, TCGCond cond,
+                                TCGv cmp, TCGv dest)
+{
+    int lab_true = gen_new_label();
+    int lab_over = gen_new_label();
+
+    tcg_gen_brcondi_tl(cond, cmp, 0, lab_true);
+    tcg_gen_movi_tl(cpu_pc, (ctx->pc + 4) & ctx->lslr);
+    tcg_gen_br(lab_over);
+    gen_set_label(lab_true);
+    tcg_gen_andi_tl(cpu_pc, dest, ctx->lslr & -4);
+    gen_set_label(lab_over);
+
+    return EXIT_PC_UPDATED;
+}
+
+static ExitStatus insn_br(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_I16;
+    return gen_bdirect(ctx, (ctx->pc + imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_bra(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_I16;
+    return gen_bdirect(ctx, (imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_brsl(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RI16;
+
+    gen_set_link(ctx, rt);
+    return gen_bdirect(ctx, (ctx->pc + imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_brasl(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RI16;
+
+    gen_set_link(ctx, rt);
+    return gen_bdirect(ctx, (imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_bi(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR_BIR;
+    return gen_bindirect(ctx, cpu_gpr[ra][0], enadis);
+}
+    
+static ExitStatus insn_iret(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR_BIR;
+
+    (void)ra;
+    return gen_bindirect(ctx, cpu_srr0, enadis);
+}
+
+static ExitStatus insn_bisled(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    int lab_over;
+    DISASS_RR_BIRR;
+
+    /* The link always gets set, whether we branch or not.  */
+    gen_set_link(ctx, rt);
+
+    /* Never take interrupts while single-stepping.  */
+    if (ctx->singlestep) {
+        return NO_EXIT;
+    }
+
+    temp = tcg_temp_new();
+    lab_over = gen_new_label();
+
+    tcg_gen_ld32u_tl(temp, cpu_env, offsetof(CPUState, interrupt_request));
+    tcg_gen_brcondi_tl(TCG_COND_EQ, temp, 0, lab_over);
+
+    gen_bindirect(ctx, cpu_gpr[ra][0], enadis);
+    tcg_gen_exit_tb(0);
+
+    gen_set_label(lab_over);
+    tcg_temp_free(temp);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_bisl(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR_BIRR;
+
+    gen_set_link(ctx, rt);
+    return gen_bindirect(ctx, cpu_gpr[ra][0], enadis);
+}
+
+static ExitStatus insn_brnz(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RI16;
+
+    return gen_bcond_dir(ctx, TCG_COND_NE, cpu_gpr[rt][0],
+                         (ctx->pc + imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_brz(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RI16;
+
+    return gen_bcond_dir(ctx, TCG_COND_EQ, cpu_gpr[rt][0],
+                         (ctx->pc + imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_brhnz(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    DISASS_RI16;
+
+    temp = tcg_temp_new();
+    tcg_gen_andi_tl(temp, cpu_gpr[rt][0], 0xffff);
+    return gen_bcond_dir(ctx, TCG_COND_NE, temp,
+                         (ctx->pc + imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_brhz(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    DISASS_RI16;
+
+    temp = tcg_temp_new();
+    tcg_gen_andi_tl(temp, cpu_gpr[rt][0], 0xffff);
+    return gen_bcond_dir(ctx, TCG_COND_EQ, temp,
+                         (ctx->pc + imm * 4) & ctx->lslr);
+}
+
+static ExitStatus insn_biz(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR_BIRR;
+    return gen_bcond_ind(ctx, TCG_COND_EQ, cpu_gpr[rt][0], cpu_gpr[ra][0]);
+}
+
+static ExitStatus insn_binz(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR_BIRR;
+    return gen_bcond_ind(ctx, TCG_COND_NE, cpu_gpr[rt][0], cpu_gpr[ra][0]);
+}
+
+static ExitStatus insn_bihz(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    DISASS_RR_BIRR;
+
+    temp = tcg_temp_new();
+    tcg_gen_andi_tl(temp, cpu_gpr[rt][0], 0xffff);
+    return gen_bcond_ind(ctx, TCG_COND_EQ, temp, cpu_gpr[ra][0]);
+}
+
+static ExitStatus insn_bihnz(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    DISASS_RR_BIRR;
+
+    temp = tcg_temp_new();
+    tcg_gen_andi_tl(temp, cpu_gpr[rt][0], 0xffff);
+    return gen_bcond_ind(ctx, TCG_COND_NE, temp, cpu_gpr[ra][0]);
+}
+
 /* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
@@ -1674,14 +1931,14 @@ static insn_fn * const translate_table[0x1000] = {
     [0x608] = insn_iohl,
     [0x328] = insn_fsmbi,
 
-//  case 0x320: _(BR);
-//  case 0x300: _(BRA);
-//  case 0x330: _(BRSL);
-//  case 0x310: _(BRASL);
-//  case 0x210: _(BRNZ);
-//  case 0x200: _(BRZ);
-//  case 0x230: _(BRHNZ);
-//  case 0x220: _(BRHZ);
+    [0x320] = insn_br,
+    [0x300] = insn_bra,
+    [0x330] = insn_brsl,
+    [0x310] = insn_brasl,
+    [0x210] = insn_brnz,
+    [0x200] = insn_brz,
+    [0x230] = insn_brhnz,
+    [0x220] = insn_brhz,
 
     /* RR/RI7 Instruction Format (11-bit op).  */
     [0x388] = insn_lqx,
@@ -1784,14 +2041,16 @@ static insn_fn * const translate_table[0x1000] = {
     [0x5a0] = insn_clgtb,
     [0x590] = insn_clgth,
     [0x580] = insn_clgt,
-//  case 0x3a0: _(BI);
-//  case 0x354: _(IRET);
-//  case 0x356: _(BISLED);
-//  case 0x352: _(BISL);
-//  case 0x250: _(BIZ);
-//  case 0x252: _(BINZ);
-//  case 0x254: _(BIHZ);
-//  case 0x256: _(BIHNZ);
+
+    [0x3a0] = insn_bi,
+    [0x354] = insn_iret,
+    [0x356] = insn_bisled,
+    [0x352] = insn_bisl,
+    [0x250] = insn_biz,
+    [0x252] = insn_binz,
+    [0x254] = insn_bihz,
+    [0x256] = insn_bihnz,
+
 //  case 0x358: _(HBR);
 //  case 0x588: _(FA);
 //  case 0x598: _(DFA);
@@ -1886,6 +2145,8 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 
     ctx.tb = tb;
     ctx.pc = pc_start = tb->pc;
+    ctx.lslr = env->lslr;
+    ctx.singlestep = env->singlestep_enabled;
 
     num_insns = 0;
     max_insns = tb->cflags & CF_COUNT_MASK;
@@ -1898,7 +2159,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
         if (unlikely(!QTAILQ_EMPTY(&env->breakpoints))) {
             QTAILQ_FOREACH(bp, &env->breakpoints, entry) {
                 if (bp->pc == ctx.pc) {
-                    gen_excp(&ctx, EXCP_DEBUG, 0);
+                    ret = gen_excp(&ctx, EXCP_DEBUG, 0);
                     break;
                 }
             }
@@ -1935,7 +2196,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
                 || gen_opc_ptr >= gen_opc_end
                 || num_insns >= max_insns
                 || singlestep
-                || env->singlestep_enabled)) {
+                || ctx.singlestep)) {
             ret = EXIT_PC_STALE;
         }
     } while (ret == NO_EXIT);
@@ -1952,7 +2213,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
         tcg_gen_movi_tl(cpu_pc, ctx.pc);
         /* FALLTHRU */
     case EXIT_PC_UPDATED:
-        if (env->singlestep_enabled) {
+        if (ctx.singlestep) {
             gen_excp_1(EXCP_DEBUG, 0);
         } else {
             tcg_gen_exit_tb(0);
@@ -1967,20 +2228,13 @@ static inline void gen_intermediate_code_internal(CPUState *env,
     if (search_pc) {
         j = gen_opc_ptr - gen_opc_buf;
         lj++;
-        while (lj <= j)
+        while (lj <= j) {
             gen_opc_instr_start[lj++] = 0;
+        }
     } else {
         tb->size = ctx.pc - pc_start;
         tb->icount = num_insns;
     }
-
-#ifdef DEBUG_DISAS
-    if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
-        qemu_log("IN: %s\n", lookup_symbol(pc_start));
-        log_target_disas(pc_start, ctx.pc - pc_start, 1);
-        qemu_log("\n");
-    }
-#endif
 }
 
 void gen_intermediate_code (CPUState *env, struct TranslationBlock *tb)
@@ -2005,6 +2259,8 @@ static void spu_translate_init(void)
 
     cpu_env = tcg_global_reg_new_ptr(TCG_AREG0, "env");
     cpu_pc = tcg_global_mem_new(TCG_AREG0, offsetof(CPUState, pc), "pc");
+    cpu_srr0 = tcg_global_mem_new(TCG_AREG0, offsetof(CPUState, srr0), "srr0");
+    cpu_inte = tcg_global_mem_new(TCG_AREG0, offsetof(CPUState, inte), "inte");
 
     for (i = 0; i < 128; i++) {
         for (j = 0; j < 4; ++j) {
