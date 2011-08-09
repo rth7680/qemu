@@ -48,6 +48,9 @@ typedef struct CPUSPUState {
     uint32_t srr0;
     uint32_t inte;
     uint32_t lslr;
+#ifndef CONFIG_USER_ONLY
+    void *memory_base;
+#endif
 
     /* Those resources are used only in Qemu core.  */
     CPU_COMMON

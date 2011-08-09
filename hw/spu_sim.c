@@ -50,6 +50,7 @@ static void spu_sim_init (ram_addr_t ram_size,
     /* Allocate RAM */
     ram_offset = qemu_ram_alloc(NULL, "spu.ram", ram_size);
     cpu_register_physical_memory(0, ram_size, ram_offset);
+    env->memory_base = qemu_get_ram_ptr(ram_offset);
 
     /* Load the program to run.  */
     if (kernel_filename == NULL) {

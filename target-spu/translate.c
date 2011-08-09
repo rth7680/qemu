@@ -65,6 +65,9 @@ static TCGv cpu_pc;
 static TCGv cpu_srr0;
 static TCGv cpu_inte;
 static TCGv cpu_gpr[128][4];
+#ifndef CONFIG_USER_ONLY
+static TCGv_ptr cpu_memory_base;
+#endif
 
 /* register names */
 static char cpu_reg_names[128][4][8];
@@ -294,6 +297,29 @@ static TCGv gen_address_d(DisassContext *ctx, TCGv a, int32_t disp)
 
 static ExitStatus gen_loadq(TCGv addr, TCGv reg[4])
 {
+#ifndef CONFIG_USER_ONLY
+    /* ??? Cheat.  Since the SPU cannot memory fault and has no MMIO,
+       perform the load directly, without flushing globals.  */
+    TCGv_ptr ptr = tcg_temp_new_ptr();
+    int i;
+
+# if TCG_TARGET_REG_BITS == 32
+    tcg_gen_mov_i32(TCGV_PTR_TO_NAT(ptr), addr);
+    tcg_gen_add_i32(TCGV_PTR_TO_NAT(ptr), TCGV_PTR_TO_NAT(ptr),
+		    TCGV_PTR_TO_NAT(cpu_memory_base));
+# else
+    tcg_gen_extu_i32_i64(TCGV_PTR_TO_NAT(ptr), addr);
+    tcg_gen_add_i64(TCGV_PTR_TO_NAT(ptr), TCGV_PTR_TO_NAT(ptr),
+		    TCGV_PTR_TO_NAT(cpu_memory_base));
+# endif
+    tcg_temp_free(addr);
+
+    for (i = 0; i < 4; ++i) {
+        tcg_gen_ld32u_tl(reg[i], ptr, i * 4);
+        tcg_gen_bswap32_tl(reg[i], reg[i]);
+    }
+    tcg_temp_free_ptr(ptr);
+#else
     tcg_gen_qemu_ld32u(reg[0], addr, 0);
     tcg_gen_addi_tl(addr, addr, 4);
     tcg_gen_qemu_ld32u(reg[1], addr, 0);
@@ -302,11 +328,37 @@ static ExitStatus gen_loadq(TCGv addr, TCGv reg[4])
     tcg_gen_addi_tl(addr, addr, 4);
     tcg_gen_qemu_ld32u(reg[3], addr, 0);
     tcg_temp_free(addr);
+#endif
     return NO_EXIT;
 }
 
 static ExitStatus gen_storeq(TCGv addr, TCGv reg[4])
 {
+#ifndef CONFIG_USER_ONLY
+    /* ??? Cheat.  Since the SPU cannot memory fault and has no MMIO,
+       perform the load directly, without flushing globals.  */
+    TCGv_ptr ptr = tcg_temp_new_ptr();
+    TCGv temp = tcg_temp_new();
+    int i;
+
+# if TCG_TARGET_REG_BITS == 32
+    tcg_gen_mov_i32(TCGV_PTR_TO_NAT(ptr), addr);
+    tcg_gen_add_i32(TCGV_PTR_TO_NAT(ptr), TCGV_PTR_TO_NAT(ptr),
+		    TCGV_PTR_TO_NAT(cpu_memory_base));
+# else
+    tcg_gen_extu_i32_i64(TCGV_PTR_TO_NAT(ptr), addr);
+    tcg_gen_add_i64(TCGV_PTR_TO_NAT(ptr), TCGV_PTR_TO_NAT(ptr),
+		    TCGV_PTR_TO_NAT(cpu_memory_base));
+# endif
+    tcg_temp_free(addr);
+
+    for (i = 0; i < 4; ++i) {
+        tcg_gen_bswap32_tl(temp, reg[i]);
+        tcg_gen_st32_tl(temp, ptr, i * 4);
+    }
+    tcg_temp_free(temp);
+    tcg_temp_free_ptr(ptr);
+#else
     tcg_gen_qemu_st32(reg[0], addr, 0);
     tcg_gen_addi_tl(addr, addr, 4);
     tcg_gen_qemu_st32(reg[1], addr, 0);
@@ -315,6 +367,7 @@ static ExitStatus gen_storeq(TCGv addr, TCGv reg[4])
     tcg_gen_addi_tl(addr, addr, 4);
     tcg_gen_qemu_st32(reg[3], addr, 0);
     tcg_temp_free(addr);
+#endif
     return NO_EXIT;
 }
 
@@ -2298,6 +2351,9 @@ static void spu_translate_init(void)
     cpu_pc = tcg_global_mem_new(TCG_AREG0, offsetof(CPUState, pc), "pc");
     cpu_srr0 = tcg_global_mem_new(TCG_AREG0, offsetof(CPUState, srr0), "srr0");
     cpu_inte = tcg_global_mem_new(TCG_AREG0, offsetof(CPUState, inte), "inte");
+#ifndef CONFIG_USER_ONLY
+    cpu_memory_base = tcg_global_mem_new_ptr(TCG_AREG0, offsetof(CPUState, memory_base), "memory");
+#endif
 
     for (i = 0; i < 128; i++) {
         for (j = 0; j < 4; ++j) {
