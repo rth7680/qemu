@@ -1,6 +1,13 @@
 #include "def-helper.h"
 
-DEF_HELPER_2(excp, void, int, int)
+DEF_HELPER_0(debug, void)
+DEF_HELPER_1(stop, void, int)
+
+DEF_HELPER_2(cb, void, ptr, i32)
+DEF_HELPER_2(ch, void, ptr, i32)
+DEF_HELPER_2(cw, void, ptr, i32)
+DEF_HELPER_2(cd, void, ptr, i32)
+
 DEF_HELPER_4(shufb, void, ptr, ptr, ptr, ptr)
 DEF_HELPER_3(shlqby, void, ptr, ptr, i32)
 DEF_HELPER_3(rotqby, void, ptr, ptr, i32)

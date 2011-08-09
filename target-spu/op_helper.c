@@ -24,6 +24,10 @@
 #include "softfloat.h"
 #include "helper.h"
 
+#ifndef CONFIG_USER_ONLY
+#include "sysemu.h"
+#endif
+
 /* Note that while the words in the register file are stored in the
    correct memory order, the actual bytes are stored in host memory
    order.  Xor BYTE_SWAP with a byte index into the register file to
@@ -34,12 +38,20 @@
 # define REG_BYTE_SWAP 3
 #endif
 
-/* This should only be called from translate, via gen_excp.
-   We expect that ENV->PC has already been updated.  */
-void QEMU_NORETURN helper_excp(int excp, int error)
+void helper_debug(void)
 {
-    env->exception_index = excp;
-    env->error_code = error;
+    env->exception_index = EXCP_DEBUG;
+    env->error_code = 0;
+    cpu_loop_exit(env);
+}
+
+void helper_stop(int signal)
+{
+    env->exception_index = EXCP_HLT;
+    env->error_code = signal;
+#ifndef CONFIG_USER_ONLY
+    qemu_system_shutdown_request();
+#endif
     cpu_loop_exit(env);
 }
 
@@ -183,6 +195,65 @@ static inline uint32_t sumb_1(uint32_t val)
 uint32_t helper_sumb(uint32_t a, uint32_t b)
 {
     return (sumb_1(b) << 16) + sumb_1(a);
+}
+
+void helper_cb(void *vt, uint32_t addr)
+{
+    uint32_t *p32 = vt;
+    uint8_t *pt = vt;
+
+    p32[0] = 0x10111213;
+    p32[1] = 0x14151617;
+    p32[2] = 0x18191a1b;
+    p32[3] = 0x1c1d1e1f;
+
+    addr &= 0xf;
+    pt[(addr & 15) ^ REG_BYTE_SWAP] = 3;
+}
+
+void helper_ch(void *vt, uint32_t addr)
+{
+    uint32_t *p32 = vt;
+    uint8_t *pt = vt;
+
+    p32[0] = 0x10111213;
+    p32[1] = 0x14151617;
+    p32[2] = 0x18191a1b;
+    p32[3] = 0x1c1d1e1f;
+
+    addr &= 0xe;
+    pt[(addr + 0)  ^ REG_BYTE_SWAP] = 2;
+    pt[(addr + 1)  ^ REG_BYTE_SWAP] = 3;
+}
+
+void helper_cw(void *vt, uint32_t addr)
+{
+    uint32_t *p32 = vt;
+
+    p32[0] = 0x10111213;
+    p32[1] = 0x14151617;
+    p32[2] = 0x18191a1b;
+    p32[3] = 0x1c1d1e1f;
+
+    addr &= 0xc;
+    p32[addr / 4] = 0x00010203;
+}
+
+void helper_cd(void *vt, uint32_t addr)
+{
+    uint32_t *p32 = vt;
+
+    if ((addr & 8) == 0) {
+        p32[0] = 0x00010203;
+        p32[1] = 0x04050607;
+        p32[2] = 0x18191a1b;
+        p32[3] = 0x1c1d1e1f;
+    } else {
+        p32[0] = 0x10111213;
+        p32[1] = 0x14151617;
+        p32[2] = 0x00010203;
+        p32[3] = 0x04050607;
+    }
 }
 
 void helper_shufb(void *vt, void *va, void *vb, void *vc)

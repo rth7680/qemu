@@ -253,24 +253,6 @@ static ExitStatus insn_##NAME(DisassContext *ctx, uint32_t insn)	\
 
 #define FOREACH_RI10(NAME, FN)  FOREACH_RI10_ADJ(NAME, FN, )
 
-static void gen_excp_1(int exception, int error_code)
-{
-    TCGv_i32 tmp1, tmp2;
-
-    tmp1 = tcg_const_i32(exception);
-    tmp2 = tcg_const_i32(error_code);
-    gen_helper_excp(tmp1, tmp2);
-    tcg_temp_free_i32(tmp2);
-    tcg_temp_free_i32(tmp1);
-}
-
-static ExitStatus gen_excp(DisassContext *ctx, int exception, int error_code)
-{
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    gen_excp_1(exception, error_code);
-    return EXIT_NORETURN;
-}
-
 /* ---------------------------------------------------------------------- */
 /* Section 2: Memory Load/Store Instructions.  */
 
@@ -419,6 +401,98 @@ static ExitStatus insn_stqr(DisassContext *ctx, uint32_t insn)
 {
     DISASS_RI16;
     return gen_storeq(gen_address_a(ctx, ctx->pc + imm * 4), cpu_gpr[rt]);
+}
+
+static ExitStatus gen_controls(void (*gen)(TCGv_ptr, TCGv), unsigned rt, TCGv addr)
+{
+    TCGv_ptr pt = tcg_temp_new_ptr();
+    tcg_gen_addi_ptr(pt, cpu_env, rt * 16);
+
+    gen(pt, addr);
+
+    tcg_temp_free(addr);
+    tcg_temp_free_ptr(pt);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_cbd(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RI7;
+
+    addr = tcg_temp_new();
+    tcg_gen_addi_tl(addr, cpu_gpr[ra][0], imm);
+    return gen_controls(gen_helper_cb, rt, addr);
+}
+
+static ExitStatus insn_cbx(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RR;
+
+    addr = tcg_temp_new();
+    tcg_gen_add_tl(addr, cpu_gpr[ra][0], cpu_gpr[rb][0]);
+    return gen_controls(gen_helper_cb, rt, addr);
+}
+
+static ExitStatus insn_chd(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RI7;
+
+    addr = tcg_temp_new();
+    tcg_gen_addi_tl(addr, cpu_gpr[ra][0], imm);
+    return gen_controls(gen_helper_ch, rt, addr);
+}
+
+static ExitStatus insn_chx(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RR;
+
+    addr = tcg_temp_new();
+    tcg_gen_add_tl(addr, cpu_gpr[ra][0], cpu_gpr[rb][0]);
+    return gen_controls(gen_helper_ch, rt, addr);
+}
+
+static ExitStatus insn_cwd(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RI7;
+
+    addr = tcg_temp_new();
+    tcg_gen_addi_tl(addr, cpu_gpr[ra][0], imm);
+    return gen_controls(gen_helper_cw, rt, addr);
+}
+
+static ExitStatus insn_cwx(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RR;
+
+    addr = tcg_temp_new();
+    tcg_gen_add_tl(addr, cpu_gpr[ra][0], cpu_gpr[rb][0]);
+    return gen_controls(gen_helper_cw, rt, addr);
+}
+
+static ExitStatus insn_cdd(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RI7;
+
+    addr = tcg_temp_new();
+    tcg_gen_addi_tl(addr, cpu_gpr[ra][0], imm);
+    return gen_controls(gen_helper_cd, rt, addr);
+}
+
+static ExitStatus insn_cdx(DisassContext *ctx, uint32_t insn)
+{
+    TCGv addr;
+    DISASS_RR;
+
+    addr = tcg_temp_new();
+    tcg_gen_add_tl(addr, cpu_gpr[ra][0], cpu_gpr[rb][0]);
+    return gen_controls(gen_helper_cd, rt, addr);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1582,9 +1656,15 @@ static ExitStatus insn_rotmai(DisassContext *ctx, uint32_t insn)
 static ExitStatus gen_halt_cond(DisassContext *ctx, TCGCond c, TCGv a, TCGv b)
 {
     int lab_over = gen_new_label();
+    TCGv temp;
 
     tcg_gen_brcond_tl(tcg_invert_cond(c), a, b, lab_over);
-    gen_excp(ctx, EXCP_HALT, 0);
+
+    tcg_gen_movi_tl(cpu_pc, ctx->pc + 4);
+
+    temp = tcg_const_tl(0);
+    gen_helper_stop(temp);
+    tcg_temp_free(temp);
 
     gen_set_label(lab_over);
     return NO_EXIT;
@@ -1956,13 +2036,18 @@ static ExitStatus insn_stop(DisassContext *ctx, uint32_t insn)
     uint32_t signal = insn & 0x3fff;
     qemu_log_mask(CPU_LOG_TB_IN_ASM, "%8x:\t%s\t%d\n", ctx->pc, INSN, signal);
 
-    return gen_excp(ctx, EXCP_STOP, signal);
+    tcg_gen_movi_tl(cpu_pc, ctx->pc + 4);
+    gen_helper_stop(tcg_const_tl(signal));
+    return EXIT_NORETURN;
 }
 
 static ExitStatus insn_stopd(DisassContext *ctx, uint32_t insn)
 {
     DISASS_RR;
-    return gen_excp(ctx, EXCP_STOP, 0);
+
+    tcg_gen_movi_tl(cpu_pc, ctx->pc + 4);
+    gen_helper_stop(tcg_const_tl(0));
+    return EXIT_NORETURN;
 }
 
 static ExitStatus insn_lnop(DisassContext *ctx, uint32_t insn)
@@ -2155,14 +2240,14 @@ static InsnDescr const translate_table[0x800] = {
     INSN(0x388, RR, lqx),
     INSN(0x288, RR, stqx),
 
-    // INSN(0x3e8, RR, CBD),
-    // INSN(0x3a8, RR, CBX),
-    // INSN(0x3ea, RR, CHD),
-    // INSN(0x3aa, RR, CHX),
-    // INSN(0x3ec, RR, CWD),
-    // INSN(0x3ac, RR, CWX),
-    // INSN(0x3ee, RR, CDD),
-    // INSN(0x3ae, RR, CDX),
+    INSN(0x3e8, RR, cbd),
+    INSN(0x3a8, RR, cbx),
+    INSN(0x3ea, RR, chd),
+    INSN(0x3aa, RR, chx),
+    INSN(0x3ec, RR, cwd),
+    INSN(0x3ac, RR, cwx),
+    INSN(0x3ee, RR, cdd),
+    INSN(0x3ae, RR, cdx),
 
     INSN(0x190, RR, ah),
     INSN(0x180, RR, a),
@@ -2383,7 +2468,9 @@ static inline void gen_intermediate_code_internal(CPUState *env,
         if (unlikely(!QTAILQ_EMPTY(&env->breakpoints))) {
             QTAILQ_FOREACH(bp, &env->breakpoints, entry) {
                 if (bp->pc == ctx.pc) {
-                    ret = gen_excp(&ctx, EXCP_DEBUG, 0);
+                    tcg_gen_movi_tl(cpu_pc, ctx.pc);
+                    gen_helper_debug();
+                    ret = EXIT_NORETURN;
                     break;
                 }
             }
@@ -2438,7 +2525,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
         /* FALLTHRU */
     case EXIT_PC_UPDATED:
         if (ctx.singlestep) {
-            gen_excp_1(EXCP_DEBUG, 0);
+            gen_helper_debug();
         } else {
             tcg_gen_exit_tb(0);
         }
