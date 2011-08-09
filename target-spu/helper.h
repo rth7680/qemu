@@ -6,6 +6,10 @@ DEF_HELPER_3(shlqby, void, ptr, ptr, i32)
 DEF_HELPER_3(rotqby, void, ptr, ptr, i32)
 DEF_HELPER_3(rotqmby, void, ptr, ptr, i32)
 
+DEF_HELPER_1(rdch, i32, i32)
+DEF_HELPER_1(rchcnt, i32, i32)
+DEF_HELPER_2(wrch, void, i32, i32)
+
 DEF_HELPER_FLAGS_1(clz, TCG_CALL_CONST | TCG_CALL_PURE, i32, i32)
 DEF_HELPER_FLAGS_1(cntb, TCG_CALL_CONST | TCG_CALL_PURE, i32, i32)
 DEF_HELPER_FLAGS_1(fsmb, TCG_CALL_CONST | TCG_CALL_PURE, i32, i32)
@@ -29,5 +33,6 @@ DEF_HELPER_FLAGS_2(clgtb, TCG_CALL_CONST | TCG_CALL_PURE, i32, i32, i32)
 DEF_HELPER_FLAGS_2(ceqh, TCG_CALL_CONST | TCG_CALL_PURE, i32, i32, i32)
 DEF_HELPER_FLAGS_2(cgth, TCG_CALL_CONST | TCG_CALL_PURE, i32, i32, i32)
 DEF_HELPER_FLAGS_2(clgth, TCG_CALL_CONST | TCG_CALL_PURE, i32, i32, i32)
+
 
 #include "def-helper.h"

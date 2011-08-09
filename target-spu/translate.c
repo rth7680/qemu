@@ -1919,6 +1919,139 @@ static ExitStatus insn_bihnz(DisassContext *ctx, uint32_t insn)
 }
 
 /* ---------------------------------------------------------------------- */
+/* Section 8: Hint for Branch Instructions.  */
+
+static ExitStatus insn_hbr(DisassContext *ctx, uint32_t insn)
+{
+  DISASS_RI7;
+
+  /* Branch hints are nops for QEMU.  */
+  return NO_EXIT;
+}
+
+static ExitStatus insn_hbra(DisassContext *ctx, uint32_t insn)
+{
+  DISASS_RI18;
+
+  /* Branch hints are nops for QEMU.  */
+  return NO_EXIT;
+}
+
+static ExitStatus insn_hbrr(DisassContext *ctx, uint32_t insn)
+{
+  DISASS_RI18;
+
+  /* Branch hints are nops for QEMU.  */
+  return NO_EXIT;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Section 9: Floating-Point Instructions.  */
+
+/* ---------------------------------------------------------------------- */
+/* Section 10: Control Instructions.  */
+
+static ExitStatus insn_stop(DisassContext *ctx, uint32_t insn)
+{
+    uint32_t signal = insn & 0x3fff;
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%8x:\t%s\t%d\n", ctx->pc, INSN, signal);
+
+    return gen_excp(ctx, EXCP_STOP, signal);
+}
+
+static ExitStatus insn_stopd(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR;
+    return gen_excp(ctx, EXCP_STOP, 0);
+}
+
+static ExitStatus insn_lnop(DisassContext *ctx, uint32_t insn)
+{
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%8x:\t%s\n", ctx->pc, INSN);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_nop(DisassContext *ctx, uint32_t insn)
+{
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%8x:\t%s\n", ctx->pc, INSN);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_sync(DisassContext *ctx, uint32_t insn)
+{
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%8x:\t%s\n", ctx->pc, INSN);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_dsync(DisassContext *ctx, uint32_t insn)
+{
+    qemu_log_mask(CPU_LOG_TB_IN_ASM, "%8x:\t%s\n", ctx->pc, INSN);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_mfspr(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR1;
+
+    /* ??? No defined SPRs yet.  */
+    tcg_gen_movi_tl(cpu_gpr[rt][0], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_mtspr(DisassContext *ctx, uint32_t insn)
+{
+    DISASS_RR1;
+    return NO_EXIT;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Section 11: Channel Instructions.  */
+
+static ExitStatus insn_rdch(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    DISASS_RR1;
+
+    temp = tcg_const_tl(ra);
+    gen_helper_rdch(cpu_gpr[rt][0], temp);
+    tcg_temp_free(temp);
+
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_rchcnt(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    DISASS_RR1;
+
+    temp = tcg_const_tl(ra);
+    gen_helper_rchcnt(cpu_gpr[rt][0], temp);
+    tcg_temp_free(temp);
+
+    tcg_gen_movi_tl(cpu_gpr[rt][1], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][2], 0);
+    tcg_gen_movi_tl(cpu_gpr[rt][3], 0);
+    return NO_EXIT;
+}
+
+static ExitStatus insn_wrch(DisassContext *ctx, uint32_t insn)
+{
+    TCGv temp;
+    DISASS_RR1;
+
+    temp = tcg_const_tl(ra);
+    gen_helper_wrch(temp, cpu_gpr[rt][0]);
+    tcg_temp_free(temp);
+    return NO_EXIT;
+}
+
+/* ---------------------------------------------------------------------- */
 
 typedef ExitStatus insn_fn(DisassContext *ctx, uint32_t insn);
 
@@ -1959,8 +2092,8 @@ static InsnDescr const translate_table[0x800] = {
 
     /* RI18 Instruction Format (7-bit op).  */
     INSN(0x420, RI18, ila),
-    // INSN(0x100, RI18, hbra),
-    // INSN(0x120, RI18, hbrr),
+    INSN(0x100, RI18, hbra),
+    INSN(0x120, RI18, hbrr),
 
     /* RI10 Instruction Format (8-bit op).  */
     INSN(0x340, RI10, lqd),
@@ -2120,7 +2253,7 @@ static InsnDescr const translate_table[0x800] = {
     INSN(0x590, RR, clgth),
     INSN(0x580, RR, clgt),
 
-    INSN(0x3a0, RR, bi),
+    INSN(0x350, RR, bi),
     INSN(0x354, RR, iret),
     INSN(0x356, RR, bisled),
     INSN(0x352, RR, bisl),
@@ -2129,7 +2262,8 @@ static InsnDescr const translate_table[0x800] = {
     INSN(0x254, RR, bihz),
     INSN(0x256, RR, bihnz),
 
-    // INSN(0x358, RR, HBR),
+    INSN(0x358, RR, hbr),
+
     // INSN(0x588, RR, FA),
     // INSN(0x598, RR, DFA),
     // INSN(0x58a, RR, FS),
@@ -2160,17 +2294,19 @@ static InsnDescr const translate_table[0x800] = {
     // INSN(0x594, RR, FCMGT),
     // INSN(0x774, RR, FSCRWR),
     // INSN(0x730, RR, FSCRRD),
-    // INSN(0x000, RR, STOP),
-    // INSN(0x280, RR, STOPD),
-    // INSN(0x002, RR, LNOP),
-    // INSN(0x402, RR, NOP),
-    // INSN(0x004, RR, SYNC),
-    // INSN(0x006, RR, DSYNC),
-    // INSN(0x018, RR, MFSPR),
-    // INSN(0x218, RR, MTSPR),
-    // INSN(0x01a, RR, RDCH),
-    // INSN(0x01e, RR, RCHCNT),
-    // INSN(0x21a, RR, WRCH),
+
+    INSN(0x000, RR, stop),
+    INSN(0x280, RR, stopd),
+    INSN(0x002, RR, lnop),
+    INSN(0x402, RR, nop),
+    INSN(0x004, RR, sync),
+    INSN(0x006, RR, dsync),
+    INSN(0x018, RR, mfspr),
+    INSN(0x218, RR, mtspr),
+
+    INSN(0x01a, RR, rdch),
+    INSN(0x01e, RR, rchcnt),
+    INSN(0x21a, RR, wrch),
 };
 
 static const InsnDescr *translate_0(uint32_t insn)

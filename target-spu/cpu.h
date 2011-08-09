@@ -62,8 +62,11 @@ typedef struct CPUSPUState {
 enum {
     EXCP_RESET,
     EXCP_HALT,
+    EXCP_STOP,
     EXCP_ILLOPC,
-    EXCP_MMFAULT
+    EXCP_MMFAULT,
+    EXCP_RDCH,
+    EXCP_WRCH,
 };
 
 extern CPUSPUState * cpu_spu_init (const char *cpu_model);

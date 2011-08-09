@@ -43,6 +43,28 @@ void QEMU_NORETURN helper_excp(int excp, int error)
     cpu_loop_exit(env);
 }
 
+static void do_restore_state(void *retaddr)
+{
+    unsigned long pc = (unsigned long)retaddr;
+
+    if (pc) {
+        TranslationBlock *tb = tb_find_pc(pc);
+        if (tb) {
+            cpu_restore_state(tb, env, pc);
+        }
+    }
+}
+
+/* This may be called from any of the helpers to set up EXCEPTION_INDEX.  */
+#define dynamic_excp(excp, error)               \
+do {                                            \
+    env->exception_index = excp;                \
+    env->error_code = error;                    \
+    do_restore_state(GETPC());                  \
+    cpu_loop_exit(env);                         \
+} while (0)
+
+
 uint32_t helper_clz(uint32_t arg)
 {
     return clz32(arg);
@@ -377,6 +399,24 @@ uint32_t helper_clgth(uint32_t a, uint32_t b)
     ret |= (ah > bh ? 0xffff0000 : 0);
 
     return ret;
+}
+
+uint32_t helper_rdch(uint32_t ch)
+{
+    /* ??? No defined channels at the moment.  */
+    dynamic_excp(EXCP_RDCH, ch);
+}
+
+uint32_t helper_rchcnt(uint32_t ch)
+{
+    /* ??? No defined channels at the moment.  */
+    return 0;
+}
+
+void helper_wrch(uint32_t ch, uint32_t val)
+{
+    /* ??? No defined channels at the moment.  */
+    dynamic_excp(EXCP_WRCH, ch);
 }
 
 /*****************************************************************************/
