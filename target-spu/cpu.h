@@ -41,6 +41,8 @@
 
 /* The one "mode" is physical addressing.  */
 #define NB_MMU_MODES 1
+#define MMU_KERNEL_IDX 0
+#define MMU_USER_IDX 0
 
 typedef struct CPUSPUState {
     uint32_t gpr[128*4];
@@ -77,7 +79,7 @@ extern int cpu_spu_signal_handler(int host_signum, void *pinfo, void *puc);
 #define cpu_signal_handler cpu_spu_signal_handler
 
 extern int cpu_spu_handle_mmu_fault (CPUSPUState *env, uint32_t address,
-				     int rw, int mmu_idx, int is_softmmu);
+				     int rw, int mmu_idx);
 #define cpu_handle_mmu_fault cpu_spu_handle_mmu_fault
 
 void do_interrupt (CPUState *env);
@@ -109,4 +111,21 @@ static inline void cpu_pc_from_tb(CPUState *env, TranslationBlock *tb)
     env->pc = tb->pc;
 }
 
+#if defined(CONFIG_USER_ONLY)
+static inline void cpu_clone_regs(CPUState *env, target_ulong newsp)
+{
+    if (newsp) {
+        env->gpr[1*4+0] = newsp;
+	env->gpr[1*4+1] = 0;  /* ??? Should be stack remaining.  */
+	env->gpr[1*4+2] = 0;
+	env->gpr[1*4+3] = 0;
+    }
+}
+
+static inline void cpu_set_tls(CPUState *env, target_ulong newtls)
+{
+    /* ??? Real SPU doesn't have threads, or TLS.  */
+}
 #endif
+
+#endif /* QEMU_SPU_CPU_H */

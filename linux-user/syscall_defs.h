@@ -70,7 +70,7 @@
 
 #elif defined(TARGET_PPC) || defined(TARGET_ALPHA) || \
       defined(TARGET_SPARC) || defined(TARGET_MICROBLAZE) || \
-      defined(TARGET_MIPS)
+      defined(TARGET_MIPS) || defined(TARGET_SPU)
 
 #define TARGET_IOC_SIZEBITS	13
 #define TARGET_IOC_DIRBITS	3
@@ -323,7 +323,7 @@ int do_sigaction(int sig, const struct target_sigaction *act,
     || defined(TARGET_PPC) || defined(TARGET_MIPS) || defined(TARGET_SH4) \
     || defined(TARGET_M68K) || defined(TARGET_ALPHA) || defined(TARGET_CRIS) \
     || defined(TARGET_MICROBLAZE) || defined(TARGET_UNICORE32) \
-    || defined(TARGET_S390X)
+    || defined(TARGET_S390X) || defined(TARGET_SPU)
 
 #if defined(TARGET_SPARC)
 #define TARGET_SA_NOCLDSTOP    8u
@@ -1027,7 +1027,7 @@ struct target_winsize {
 #define TARGET_MAP_NORESERVE	0x0400		/* don't check for reservations */
 #define TARGET_MAP_POPULATE	0x10000		/* populate (prefault) pagetables */
 #define TARGET_MAP_NONBLOCK	0x20000		/* do not block on IO */
-#elif defined(TARGET_PPC)
+#elif defined(TARGET_PPC) || defined(TARGET_SPU)
 #define TARGET_MAP_FIXED	0x10		/* Interpret addr exactly */
 #define TARGET_MAP_ANONYMOUS	0x20		/* don't use a file */
 #define TARGET_MAP_GROWSDOWN	0x0100		/* stack-like segment */
@@ -1263,7 +1263,7 @@ struct target_stat64 {
 	unsigned int	__unused5;
 };
 
-#elif defined(TARGET_PPC)
+#elif defined(TARGET_PPC) || defined(TARGET_SPU)
 
 struct target_stat {
 	abi_ulong st_dev;
@@ -1966,7 +1966,7 @@ struct target_statfs64 {
 #define TARGET_O_NOFOLLOW      0100000 /* don't follow links */
 #define TARGET_O_DIRECT        0200000 /* direct disk access hint */
 #define TARGET_O_LARGEFILE     0400000
-#elif defined (TARGET_PPC)
+#elif defined (TARGET_PPC) || defined(TARGET_SPU)
 #define TARGET_O_ACCMODE          0003
 #define TARGET_O_RDONLY             00
 #define TARGET_O_WRONLY             01
@@ -2089,7 +2089,7 @@ struct target_flock {
 struct target_flock64 {
 	short  l_type;
 	short  l_whence;
-#if defined(TARGET_PPC) || defined(TARGET_X86_64) || defined(TARGET_MIPS) || defined(TARGET_SPARC) || defined(TARGET_HPPA) || defined (TARGET_MICROBLAZE)
+#if defined(TARGET_PPC) || defined(TARGET_X86_64) || defined(TARGET_MIPS) || defined(TARGET_SPARC) || defined(TARGET_HPPA) || defined (TARGET_MICROBLAZE) || defined(TARGET_SPU)
         int __pad;
 #endif
 	unsigned long long l_start;

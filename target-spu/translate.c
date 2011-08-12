@@ -2428,7 +2428,8 @@ static ExitStatus translate_1(DisassContext *ctx, uint32_t insn)
     const InsnDescr *desc = translate_0(insn);
 
     if (desc == NULL) {
-        hw_error("Unimplemented opcode %#3x\n", insn >> 20);
+        qemu_log("Unimplemented opcode %#3x\n", insn >> 20);
+	return NO_EXIT;
     }
 
     return desc->fn(ctx, insn);

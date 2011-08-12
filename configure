@@ -897,6 +897,7 @@ sparc64-linux-user \
 sparc32plus-linux-user \
 unicore32-linux-user \
 s390x-linux-user \
+spu-linux-user \
 "
 fi
 # the following are Darwin specific

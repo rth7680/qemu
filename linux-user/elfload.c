@@ -888,6 +888,22 @@ static inline void init_thread(struct target_pt_regs *regs, struct image_info *i
 
 #endif /* TARGET_S390X */
 
+#ifdef TARGET_SPU
+
+#define ELF_START_MMAP 0x80000000
+#define elf_check_arch(x) ((x) == ELF_ARCH)
+#define ELF_CLASS   ELFCLASS32
+#define ELF_ARCH    EM_SPU
+
+static inline void init_thread(struct target_pt_regs *regs,
+                               struct image_info * infop)
+{
+    regs->gpr[1*4+0] = infop->start_stack;
+    regs->pc = infop->entry;
+}
+
+#endif /* TARGET_SPU */
+
 #ifndef ELF_PLATFORM
 #define ELF_PLATFORM (NULL)
 #endif

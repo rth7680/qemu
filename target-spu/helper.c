@@ -20,8 +20,8 @@
 
 #include "cpu.h"
 
-int cpu_spu_handle_mmu_fault (CPUState *env, target_ulong address, int rw,
-                              int mmu_idx, int is_softmmu)
+int cpu_spu_handle_mmu_fault (CPUState *env, target_ulong address,
+                              int rw, int mmu_idx)
 {
 #ifndef CONFIG_USER_ONLY
     address &= TARGET_PAGE_MASK;
@@ -31,10 +31,12 @@ int cpu_spu_handle_mmu_fault (CPUState *env, target_ulong address, int rw,
     return 0;
 }
 
+#ifndef CONFIG_USER_ONLY
 target_phys_addr_t cpu_get_phys_page_debug(CPUState *env, target_ulong addr)
 {
     return addr;
 }
+#endif
 
 void do_interrupt (CPUState *env)
 {

@@ -2780,6 +2780,84 @@ void cpu_loop(CPUS390XState *env)
 
 #endif /* TARGET_S390X */
 
+#ifdef TARGET_SPU
+void cpu_loop (CPUState *env)
+{
+    while (1) {
+        int trapnr = cpu_spu_exec (env);
+        switch (trapnr) {
+        case EXCP_RESET:
+            fprintf(stderr, "Reset requested. Exit.\n");
+            exit(1);
+            break;
+        case EXCP_ILLOPC:
+            fprintf(stderr, "Illegal opcode.  Exit.\n");
+            exit(1);
+            break;
+        case EXCP_MMFAULT:
+        do_sigsegv:
+            fprintf(stderr, "Segmentation fault.  Exit.\n");
+            exit(1);
+            break;
+        case EXCP_RDCH:
+        case EXCP_WRCH:
+            fprintf(stderr, "Invalid channel operation.  Exit.\n");
+            exit(1);
+            break;
+        case EXCP_DEBUG:
+            trapnr = gdb_handlesig (env, TARGET_SIGTRAP);
+            if (trapnr) {
+                fprintf(stderr, "Signal %d.  Exit.\n", trapnr);
+                exit(1);
+            }
+            break;
+        case EXCP_HLT:
+            if (env->error_code == 0x2104) {
+                /* Linux syscall.  Presumably the PPC host does not have
+                   access to the SPU registers, because instead we pass all
+                   parameters in memory, via a pointer that is stored
+                   in the next instruction slot.  */
+                abi_long syscall_ptr, syscall_ret;
+                struct target_syscall_block block;
+
+                if (get_user_u32(syscall_ptr, env->pc + 4)
+                    || copy_from_user(&block, syscall_ptr, sizeof(block))) {
+                    goto do_sigsegv;
+                }
+
+                /* ??? These really are all 64-bit parameters.  We probably
+                   have to pretend that we're a 64-bit guest in order to 
+                   get syscalls like lseek64 etc to work properly.  */
+                syscall_ret = do_syscall(env, tswap64(block.nr_ret),
+                                         tswap64(block.parm[0]),
+                                         tswap64(block.parm[1]),
+                                         tswap64(block.parm[2]),
+                                         tswap64(block.parm[3]),
+                                         tswap64(block.parm[4]),
+                                         tswap64(block.parm[5]), 0, 0);
+
+                put_user_u64(syscall_ret, syscall_ptr);
+
+                /* Skip the stop insn and the syscall pointer.  */
+                env->pc += 8;
+                break;
+            }
+
+            /* ??? Other kinds of stops?  Most of these really do stop the
+               SPU and (normally) signal the host PPC.  */
+            exit(env->error_code ? 1 : 0);
+            break;
+
+        default:
+            printf ("Unhandled trap: 0x%x\n", trapnr);
+            cpu_dump_state(env, stderr, fprintf, 0);
+            exit (1);
+        }
+    }
+}
+#endif /* TARGET_SPU */
+
+
 static void version(void)
 {
     printf("qemu-" TARGET_ARCH " version " QEMU_VERSION QEMU_PKGVERSION
@@ -3548,6 +3626,12 @@ int main(int argc, char **argv, char **envp)
             }
             env->psw.mask = regs->psw.mask;
             env->psw.addr = regs->psw.addr;
+    }
+#elif defined(TARGET_SPU)
+    {
+        memcpy(env->gpr, regs->gpr, sizeof(env->gpr));
+        env->pc = regs->pc;
+        env->lslr = 0xffffffffu;
     }
 #else
 #error unsupported target CPU
