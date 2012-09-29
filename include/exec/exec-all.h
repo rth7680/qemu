@@ -407,11 +407,15 @@ void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr);
 #error tb_set_jmp_target1 is missing
 #endif
 
+#ifndef tb_set_jmp_target2
+# define tb_set_jmp_target2(TB, JA, A)  tb_set_jmp_target1(JA, A)
+#endif
+
 static inline void tb_set_jmp_target(TranslationBlock *tb,
                                      int n, uintptr_t addr)
 {
     uint16_t offset = tb->jmp_insn_offset[n];
-    tb_set_jmp_target1((uintptr_t)(tb->tc_ptr + offset), addr);
+    tb_set_jmp_target2(tb, (uintptr_t)(tb->tc_ptr + offset), addr);
 }
 
 #else

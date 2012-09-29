@@ -520,6 +520,8 @@ elif check_define __arm__ ; then
   cpu="arm"
 elif check_define __aarch64__ ; then
   cpu="aarch64"
+elif check_define __alpha__ ; then
+  cpu="alpha"
 else
   cpu=$(uname -m)
 fi
@@ -558,6 +560,9 @@ case "$cpu" in
   sparc|sun4[cdmuv])
     cpu="sparc"
     supported_cpu="yes"
+  ;;
+  alpha*)
+    cpu="alpha"
   ;;
   *)
     # This will result in either an error or falling back to TCI later
@@ -1210,6 +1215,10 @@ for opt do
 done
 
 case "$cpu" in
+    alpha)
+           QEMU_CFLAGS="-msmall-data $QEMU_CFLAGS"
+           LDFLAGS="-Wl,--warn-multiple-gp $LDFLAGS"
+           ;;
     ppc)
            CPU_CFLAGS="-m32"
            LDFLAGS="-m32 $LDFLAGS"
@@ -6327,13 +6336,6 @@ done
 if test "$tcg_interpreter" = "yes" ; then
   disas_config "TCI"
 fi
-
-case "$ARCH" in
-alpha)
-  # Ensure there's only a single GP
-  cflags="-msmall-data $cflags"
-;;
-esac
 
 if test "$gprof" = "yes" ; then
   echo "TARGET_GPROF=yes" >> $config_target_mak
