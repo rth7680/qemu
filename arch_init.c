@@ -66,6 +66,8 @@ int graphic_depth = 32;
 #define QEMU_ARCH QEMU_ARCH_MOXIE
 #elif defined(TARGET_OPENRISC)
 #define QEMU_ARCH QEMU_ARCH_OPENRISC
+#elif defined(TARGET_PDP11)
+#define QEMU_ARCH QEMU_ARCH_PDP11
 #elif defined(TARGET_PPC)
 #define QEMU_ARCH QEMU_ARCH_PPC
 #elif defined(TARGET_S390X)

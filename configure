@@ -5697,6 +5697,8 @@ case "$target_name" in
     TARGET_ARCH=openrisc
     TARGET_BASE_ARCH=openrisc
   ;;
+  pdp11)
+  ;;
   ppc)
     gdb_xml_files="power-core.xml power-fpu.xml power-altivec.xml power-spe.xml"
   ;;
