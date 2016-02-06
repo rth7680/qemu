@@ -290,7 +290,9 @@ typedef enum {
     OPC_ORI      = 015 << 26,
     OPC_XORI     = 016 << 26,
     OPC_LUI      = 017 << 26,
+    OPC_AUI      = OPC_LUI,
     OPC_DADDIU   = 031 << 26,
+    OPC_DAUI     = 035 << 26,
     OPC_LB       = 040 << 26,
     OPC_LH       = 041 << 26,
     OPC_LW       = 043 << 26,
@@ -373,6 +375,9 @@ typedef enum {
     OPC_REGIMM   = 001 << 26,
     OPC_BLTZ     = OPC_REGIMM | (000 << 16),
     OPC_BGEZ     = OPC_REGIMM | (001 << 16),
+    OPC_DAHI     = OPC_REGIMM | (006 << 16),
+    OPC_NAL      = OPC_REGIMM | (020 << 16) | 1,  /* bltzal zero, .+8 */
+    OPC_DATI     = OPC_REGIMM | (036 << 16),
 
     OPC_SPECIAL2 = 034 << 26,
     OPC_MUL_R5   = OPC_SPECIAL2 | 002,
@@ -393,6 +398,10 @@ typedef enum {
     OPC_DSHD     = OPC_SPECIAL3 | 00544,
     OPC_SEB      = OPC_SPECIAL3 | 02040,
     OPC_SEH      = OPC_SPECIAL3 | 03040,
+
+    OPC_PCREL    = 073 << 26,
+    OPC_ADDIUPC  = OPC_PCREL | (0 << 19),
+    OPC_ALUIPC   = OPC_PCREL | (3 << 19) | (7 << 16),
 
     /* MIPS r6 doesn't have JR, JALR should be used instead */
     OPC_JR       = use_mips32r6_instructions ? OPC_JALR : OPC_JR_R5,
@@ -445,6 +454,17 @@ static inline void tcg_out_opc_imm(TCGContext *s, MIPSInsn opc,
     inst |= (rs & 0x1F) << 21;
     inst |= (rt & 0x1F) << 16;
     inst |= (imm & 0xffff);
+    tcg_out32(s, inst);
+}
+
+static inline void tcg_out_opc_pc19(TCGContext *s, MIPSInsn opc,
+                                    TCGReg rs, TCGArg imm)
+{
+    int32_t inst;
+
+    inst = opc;
+    inst |= (rs & 0x1F) << 21;
+    inst |= (imm & 0x7ffff);
     tcg_out32(s, inst);
 }
 
@@ -576,6 +596,9 @@ static inline void tcg_out_mov(TCGContext *s, TCGType type,
 static void tcg_out_movi(TCGContext *s, TCGType type,
                          TCGReg ret, tcg_target_long arg)
 {
+    uintptr_t pc = (uintptr_t)s->code_ptr;
+    intptr_t disp;
+
     if (TCG_TARGET_REG_BITS == 64 && type == TCG_TYPE_I32) {
         arg = (int32_t)arg;
     }
@@ -587,18 +610,96 @@ static void tcg_out_movi(TCGContext *s, TCGType type,
         tcg_out_opc_imm(s, OPC_ORI, ret, TCG_REG_ZERO, arg);
         return;
     }
-    if (TCG_TARGET_REG_BITS == 32 || arg == (int32_t)arg) {
-        tcg_out_opc_imm(s, OPC_LUI, ret, TCG_REG_ZERO, arg >> 16);
-    } else {
-        tcg_out_movi(s, TCG_TYPE_I32, ret, arg >> 31 >> 1);
-        if (arg & 0xffff0000ull) {
-            tcg_out_dsll(s, ret, ret, 16);
-            tcg_out_opc_imm(s, OPC_ORI, ret, ret, arg >> 16);
-            tcg_out_dsll(s, ret, ret, 16);
-        } else {
-            tcg_out_dsll(s, ret, ret, 32);
+
+    /* PC-relative address load, part 1.  The out-of-line slow paths
+       of qemu_ld/st compute the "return address" of the in-line fast
+       path, so that we can find the guest instruction that triggered
+       the memory fault.  Here, we can do that in one instruction.  */
+    if (use_mips32r6_instructions && (arg & 3) == 0) {
+        disp = arg - pc;
+        if (disp == sextract32(disp, 0, 21)) {
+            tcg_out_opc_pc19(s, OPC_ADDIUPC, ret, disp >> 2);
+            return;
         }
     }
+
+    if (TCG_TARGET_REG_BITS == 32 || arg == (int32_t)arg) {
+        tcg_out_opc_imm(s, OPC_LUI, ret, TCG_REG_ZERO, arg >> 16);
+        goto do_lo16;
+    }
+
+    if (use_mips32r6_instructions) {
+        tcg_target_long tmp;
+        TCGReg in;
+
+        /* PC-relative address load, part 2.  Here we are able to compute
+           a +- 2GB relative address in two instructions.  This not likely
+           to be within code_gen_buffer, but a helper function address or
+           other host memory that just happens to be in range.  */
+        disp = sextract64(arg, 16, 48) - sextract64(pc, 16, 48);
+        if (disp == (int16_t)disp) {
+            tcg_out_opc_imm(s, OPC_ALUIPC, 0, ret, disp);
+            goto do_lo16;
+        }
+
+        /* The R6 manual recommends construction of immediates in
+           order of low to high (ADDI, AUI, DAHI, DATI) in order
+           to simplify hardware recognizing these sequences.  */
+
+        in = TCG_REG_ZERO;
+        tmp = (int16_t)arg;
+        if (tmp) {
+            tcg_out_opc_imm(s, OPC_ADDIU, ret, in, tmp);
+            in = ret;
+        }
+        arg = (arg - tmp) >> 16;
+        tmp = (int16_t)arg;
+
+        /* Note that DAHI and DATI only have one register operand,
+           and are thus we must put a zero low part in place.  Also
+           note that we already eliminated simple 32-bit constants
+           so we know this must happen.  */
+        if (tmp || in != ret) {
+            tcg_out_opc_imm(s, OPC_AUI, ret, in, tmp);
+        }
+        arg = (arg - tmp) >> 16;
+        tmp = (int16_t)arg;
+
+        if (tmp) {
+            tcg_out_opc_imm(s, OPC_DAHI, 0, ret, tmp);
+        }
+        arg = (arg - tmp) >> 16;
+        tcg_debug_assert(arg == (int16_t)arg);
+
+        if (arg) {
+            tcg_out_opc_imm(s, OPC_DATI, 0, ret, arg);
+        }
+        return;
+    }
+
+    /* PC-relative address load, part 3.  For mips64 pre-r6, we can use
+       NAL (nop and link, aka BLTZAL with a false condition) to load the
+       return address register with pc+8.  This lets us compute the
+       return address for qemu_ld/st only in 2 insns.  */
+    disp = arg - (pc + 8);
+    if (disp == (int16_t)disp) {
+        tcg_out32(s, OPC_NAL);
+        tcg_out_opc_imm(s, OPC_DADDIU, ret, TCG_REG_RA, disp);
+        return;
+    }
+
+    /* Last resort: To build a full 64-bit constant, we load the high
+       32 bits, then shift and or in the low 32 bits.  This may take
+       up to 6 instructions.  */
+    tcg_out_movi(s, TCG_TYPE_I32, ret, arg >> 31 >> 1);
+    if (arg & 0xffff0000ull) {
+        tcg_out_dsll(s, ret, ret, 16);
+        tcg_out_opc_imm(s, OPC_ORI, ret, ret, arg >> 16);
+        tcg_out_dsll(s, ret, ret, 16);
+    } else {
+        tcg_out_dsll(s, ret, ret, 32);
+    }
+ do_lo16:
     if (arg & 0xffff) {
         tcg_out_opc_imm(s, OPC_ORI, ret, ret, arg & 0xffff);
     }
