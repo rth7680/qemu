@@ -423,6 +423,7 @@ typedef enum {
     /* Aliases for convenience.  */
     ALIAS_PADD     = sizeof(void *) == 4 ? OPC_ADDU : OPC_DADDU,
     ALIAS_PADDI    = sizeof(void *) == 4 ? OPC_ADDIU : OPC_DADDIU,
+    ALIAS_PAUI     = sizeof(void *) == 4 ? OPC_AUI : OPC_DAUI,
     ALIAS_TSRL     = TARGET_LONG_BITS == 32 || TCG_TARGET_REG_BITS == 32
                      ? OPC_SRL : OPC_DSRL,
 } MIPSInsn;
@@ -816,9 +817,48 @@ static inline void tcg_out_ext32u(TCGContext *s, TCGReg ret, TCGReg arg)
     }
 }
 
+static void tcg_out_r6_ofs(TCGContext *s, MIPSInsn opl, MIPSInsn oph,
+                           TCGReg reg0, TCGReg reg1, tcg_target_long ofs)
+{
+    TCGReg scratch = TCG_TMP0;
+    int16_t lo = ofs;
+    int32_t hi = ofs - lo;
+
+    ofs = ofs - hi - lo;
+    if (oph == OPC_DAUI && ofs != 0) {
+        tcg_target_long tmp;
+
+        /* Bits are set in the high 32-bit half.  Thus we require the
+           use of DAHI and/or DATI.  The R6 manual recommends addition
+           of immediates in order of mid to high (DAUI, DAHI, DATI, OPL)
+           in order to simplify hardware recognizing these sequences.  */
+
+        tcg_out_opc_imm(s, OPC_DAUI, scratch, reg1, hi >> 16);
+
+        tmp = ofs >> 16 >> 16;
+        if (tmp & 0xffff) {
+            tcg_out_opc_imm(s, OPC_DAHI, 0, scratch, tmp);
+        }
+        tmp = (tmp - (int16_t)tmp) >> 16;
+        if (tmp) {
+            tcg_out_opc_imm(s, OPC_DATI, 0, scratch, tmp);
+        }
+        reg1 = scratch;
+    } else if (hi != 0) {
+        tcg_out_opc_imm(s, oph, scratch, reg1, hi >> 16);
+        reg1 = scratch;
+    }
+    tcg_out_opc_imm(s, opc, reg0, reg1, lo);
+}
+
 static void tcg_out_ldst(TCGContext *s, MIPSInsn opc, TCGReg data,
                          TCGReg addr, intptr_t ofs)
 {
+    if (use_mips32r6_instructions) {
+        tcg_out_r6_ofs(s, opc, ALIAS_PAUI, data, addr, ofs);
+        return;
+    }
+
     int16_t lo = ofs;
     if (ofs != lo) {
         tcg_out_movi(s, TCG_TYPE_PTR, TCG_TMP0, ofs - lo);
