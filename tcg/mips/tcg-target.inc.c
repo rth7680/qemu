@@ -225,12 +225,26 @@ static const char *target_parse_constraint(TCGArgConstraint *ct,
     case 'I':
         ct->ct |= TCG_CT_CONST_U16;
         break;
+    case 'a':
+        /* mips r6 can add any constant without needing a temporary.  */
+        if (use_mips32r6_instructions) {
+            ct->ct |= TCG_CT_CONST;
+            break;
+        }
+        /* fallthru */
     case 'J':
         ct->ct |= TCG_CT_CONST_S16;
         break;
     case 'K':
         ct->ct |= TCG_CT_CONST_P2M1;
         break;
+    case 's':
+        /* mips r6 can subtract any constant without needing a temporary.  */
+        if (use_mips32r6_instructions) {
+            ct->ct |= TCG_CT_CONST;
+            break;
+        }
+        /* fallthru */
     case 'N':
         ct->ct |= TCG_CT_CONST_N16;
         break;
@@ -818,9 +832,10 @@ static inline void tcg_out_ext32u(TCGContext *s, TCGReg ret, TCGReg arg)
 }
 
 static void tcg_out_r6_ofs(TCGContext *s, MIPSInsn opl, MIPSInsn oph,
-                           TCGReg reg0, TCGReg reg1, tcg_target_long ofs)
+                           TCGReg reg0, TCGReg reg1,
+                           tcg_target_long ofs, bool is_mem)
 {
-    TCGReg scratch = TCG_TMP0;
+    TCGReg scratch = is_mem ? TCG_TMP0 : reg0;
     int16_t lo = ofs;
     int32_t hi = ofs - lo;
 
@@ -831,9 +846,15 @@ static void tcg_out_r6_ofs(TCGContext *s, MIPSInsn opl, MIPSInsn oph,
         /* Bits are set in the high 32-bit half.  Thus we require the
            use of DAHI and/or DATI.  The R6 manual recommends addition
            of immediates in order of mid to high (DAUI, DAHI, DATI, OPL)
-           in order to simplify hardware recognizing these sequences.  */
+           in order to simplify hardware recognizing these sequences.
+           Ignore this wrt DADDIU if it will save one instruction.  */
 
-        tcg_out_opc_imm(s, OPC_DAUI, scratch, reg1, hi >> 16);
+        if (hi == 0 && lo != 0 && !is_mem) {
+            tcg_out_opc_imm(s, OPC_DADDIU, scratch, reg1, lo);
+            lo = 0;
+        } else if (hi != 0 || reg1 != scratch) {
+            tcg_out_opc_imm(s, OPC_DAUI, scratch, reg1, hi >> 16);
+        }
 
         tmp = ofs >> 16 >> 16;
         if (tmp & 0xffff) {
@@ -848,14 +869,16 @@ static void tcg_out_r6_ofs(TCGContext *s, MIPSInsn opl, MIPSInsn oph,
         tcg_out_opc_imm(s, oph, scratch, reg1, hi >> 16);
         reg1 = scratch;
     }
-    tcg_out_opc_imm(s, opc, reg0, reg1, lo);
+    if (is_mem || lo != 0 || reg0 != reg1) {
+        tcg_out_opc_imm(s, opl, reg0, reg1, lo);
+    }
 }
 
 static void tcg_out_ldst(TCGContext *s, MIPSInsn opc, TCGReg data,
                          TCGReg addr, intptr_t ofs)
 {
     if (use_mips32r6_instructions) {
-        tcg_out_r6_ofs(s, opc, ALIAS_PAUI, data, addr, ofs);
+        tcg_out_r6_ofs(s, opc, ALIAS_PAUI, data, addr, ofs, true);
         return;
     }
 
@@ -1945,9 +1968,17 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         break;
 
     case INDEX_op_add_i32:
+        if (use_mips32r6_instructions && c2) {
+            tcg_out_r6_ofs(s, OPC_ADDIU, OPC_AUI, a0, a1, (int32_t)a2, false);
+            break;
+        }
         i1 = OPC_ADDU, i2 = OPC_ADDIU;
         goto do_binary;
     case INDEX_op_add_i64:
+        if (use_mips32r6_instructions && c2) {
+            tcg_out_r6_ofs(s, OPC_DADDIU, OPC_DAUI, a0, a1, a2, false);
+            break;
+        }
         i1 = OPC_DADDU, i2 = OPC_DADDIU;
         goto do_binary;
     case INDEX_op_or_i32:
@@ -1967,9 +1998,17 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         break;
 
     case INDEX_op_sub_i32:
+        if (use_mips32r6_instructions && c2) {
+            tcg_out_r6_ofs(s, OPC_ADDIU, OPC_AUI, a0, a1, (int32_t)-a2, false);
+            break;
+        }
         i1 = OPC_SUBU, i2 = OPC_ADDIU;
         goto do_subtract;
     case INDEX_op_sub_i64:
+        if (use_mips32r6_instructions && c2) {
+            tcg_out_r6_ofs(s, OPC_DADDIU, OPC_DAUI, a0, a1, -a2, false);
+            break;
+        }
         i1 = OPC_DSUBU, i2 = OPC_DADDIU;
     do_subtract:
         if (c2) {
@@ -2319,7 +2358,7 @@ static const TCGTargetOpDef mips_op_defs[] = {
     { INDEX_op_st16_i32, { "rZ", "r" } },
     { INDEX_op_st_i32, { "rZ", "r" } },
 
-    { INDEX_op_add_i32, { "r", "rZ", "rJ" } },
+    { INDEX_op_add_i32, { "r", "rZ", "ra" } },
     { INDEX_op_mul_i32, { "r", "rZ", "rZ" } },
 #if !use_mips32r6_instructions
     { INDEX_op_muls2_i32, { "r", "r", "rZ", "rZ" } },
@@ -2331,7 +2370,7 @@ static const TCGTargetOpDef mips_op_defs[] = {
     { INDEX_op_divu_i32, { "r", "rZ", "rZ" } },
     { INDEX_op_rem_i32, { "r", "rZ", "rZ" } },
     { INDEX_op_remu_i32, { "r", "rZ", "rZ" } },
-    { INDEX_op_sub_i32, { "r", "rZ", "rN" } },
+    { INDEX_op_sub_i32, { "r", "rZ", "rs" } },
 
     { INDEX_op_and_i32, { "r", "rZ", "rIK" } },
     { INDEX_op_nor_i32, { "r", "rZ", "rZ" } },
@@ -2383,7 +2422,7 @@ static const TCGTargetOpDef mips_op_defs[] = {
     { INDEX_op_st32_i64, { "rZ", "r" } },
     { INDEX_op_st_i64, { "rZ", "r" } },
 
-    { INDEX_op_add_i64, { "r", "rZ", "rJ" } },
+    { INDEX_op_add_i64, { "r", "rZ", "ra" } },
     { INDEX_op_mul_i64, { "r", "rZ", "rZ" } },
 #if !use_mips32r6_instructions
     { INDEX_op_muls2_i64, { "r", "r", "rZ", "rZ" } },
@@ -2395,7 +2434,7 @@ static const TCGTargetOpDef mips_op_defs[] = {
     { INDEX_op_divu_i64, { "r", "rZ", "rZ" } },
     { INDEX_op_rem_i64, { "r", "rZ", "rZ" } },
     { INDEX_op_remu_i64, { "r", "rZ", "rZ" } },
-    { INDEX_op_sub_i64, { "r", "rZ", "rN" } },
+    { INDEX_op_sub_i64, { "r", "rZ", "rs" } },
 
     { INDEX_op_and_i64, { "r", "rZ", "rIK" } },
     { INDEX_op_nor_i64, { "r", "rZ", "rZ" } },
