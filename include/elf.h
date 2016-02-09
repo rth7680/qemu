@@ -354,6 +354,10 @@ typedef struct {
 #define R_MIPS_CALLHI16		30
 #define R_MIPS_CALLLO16		31
 /*
+ * Incomplete list of MIPS R6 relocation types.
+ */
+#define R_MIPS_PC26_S2          61
+/*
  * This range is reserved for vendor specific relocations.
  */
 #define R_MIPS_LOVENDOR		100

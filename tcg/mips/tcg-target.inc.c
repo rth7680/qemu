@@ -159,6 +159,19 @@ static inline void reloc_pc16(tcg_insn_unit *pc, tcg_insn_unit *target)
     *pc = deposit32(*pc, 0, 16, reloc_pc16_val(pc, target));
 }
 
+static inline uint32_t reloc_pc26_val(tcg_insn_unit *pc, tcg_insn_unit *target)
+{
+    /* Let the compiler perform the right-shift as part of the arithmetic.  */
+    ptrdiff_t disp = target - (pc + 1);
+    tcg_debug_assert(disp == sextract32(disp, 0, 26));
+    return disp & 0x1ffffff;
+}
+
+static inline void reloc_pc26(tcg_insn_unit *pc, tcg_insn_unit *target)
+{
+    *pc = deposit32(*pc, 0, 26, reloc_pc16_val(pc, target));
+}
+
 static inline uint32_t reloc_26_val(tcg_insn_unit *pc, tcg_insn_unit *target)
 {
     tcg_debug_assert((((uintptr_t)pc ^ (uintptr_t)target) & 0xf0000000) == 0);
@@ -173,9 +186,17 @@ static inline void reloc_26(tcg_insn_unit *pc, tcg_insn_unit *target)
 static void patch_reloc(tcg_insn_unit *code_ptr, int type,
                         intptr_t value, intptr_t addend)
 {
-    tcg_debug_assert(type == R_MIPS_PC16);
     tcg_debug_assert(addend == 0);
-    reloc_pc16(code_ptr, (tcg_insn_unit *)value);
+    switch (type) {
+    case R_MIPS_PC16:
+        reloc_pc16(code_ptr, (tcg_insn_unit *)value);
+	break;
+    case R_MIPS_PC26_S2:
+        reloc_pc26(code_ptr, (tcg_insn_unit *)value);
+	break;
+    default:
+        tcg_abort();
+    }
 }
 
 #define TCG_CT_CONST_ZERO 0x100
@@ -296,7 +317,10 @@ typedef enum {
     OPC_BEQ      = 004 << 26,
     OPC_BNE      = 005 << 26,
     OPC_BLEZ     = 006 << 26,
+    OPC_BGEUC    = OPC_BLEZ,    /* R6: rs != 0, rt != 0, rs != rt */
     OPC_BGTZ     = 007 << 26,
+    OPC_BLTUC    = OPC_BGTZ,    /* R6: rs != 0, rt != 0, rs != rt */
+    OPC_BEQC     = 010 << 26,   /* R6: rs > rt */
     OPC_ADDIU    = 011 << 26,
     OPC_SLTI     = 012 << 26,
     OPC_SLTIU    = 013 << 26,
@@ -305,6 +329,9 @@ typedef enum {
     OPC_XORI     = 016 << 26,
     OPC_LUI      = 017 << 26,
     OPC_AUI      = OPC_LUI,
+    OPC_BGEC     = 026 << 26,
+    OPC_BLTC     = 027 << 26,
+    OPC_BNEC     = 030 << 26,   /* R6: rs > rt */
     OPC_DADDIU   = 031 << 26,
     OPC_DAUI     = 035 << 26,
     OPC_LB       = 040 << 26,
@@ -316,6 +343,7 @@ typedef enum {
     OPC_SB       = 050 << 26,
     OPC_SH       = 051 << 26,
     OPC_SW       = 053 << 26,
+    OPC_BC       = 062 << 26,
     OPC_LD       = 067 << 26,
     OPC_SD       = 077 << 26,
 
@@ -442,6 +470,33 @@ typedef enum {
                      ? OPC_SRL : OPC_DSRL,
 } MIPSInsn;
 
+static inline void tcg_out_nop(TCGContext *s)
+{
+    tcg_out32(s, 0);
+}
+
+/*
+ * Protect against a mips r6 forbidden slot.  If the previously
+ * emitted insn has a forbidden slot, emit a nop.
+ */
+
+static void nop_forbidden_slot(TCGContext *s)
+{
+    if (use_mips32r6_instructions && s->code_ptr > s->code_buf) {
+        tcg_insn_unit prev = s->code_ptr[-1];
+        switch (prev & 0xfc000000u) {
+        case OPC_BGEC:
+        case OPC_BLTC:
+        case OPC_BGEUC:
+        case OPC_BLTUC:
+        case OPC_BEQC:
+        case OPC_BNEC:
+            tcg_out_nop(s);
+            break;
+        }
+    }
+}
+
 /*
  * Type reg
  */
@@ -517,15 +572,28 @@ static inline void tcg_out_opc_bf64(TCGContext *s, MIPSInsn opc, MIPSInsn opm,
 /*
  * Type branch
  */
-static inline void tcg_out_opc_br(TCGContext *s, MIPSInsn opc,
-                                  TCGReg rt, TCGReg rs)
+static void tcg_out_opc_br(TCGContext *s, MIPSInsn opc, TCGReg rt, TCGReg rs)
 {
+    uint16_t offset;
+
+    nop_forbidden_slot(s);
+
     /* We pay attention here to not modify the branch target by reading
        the existing value and using it again. This ensure that caches and
        memory are kept coherent during retranslation. */
-    uint16_t offset = (uint16_t)*s->code_ptr;
-
+    offset = (uint16_t)*s->code_ptr;
     tcg_out_opc_imm(s, opc, rt, rs, offset);
+}
+
+static void tcg_out_opc_br_pc16(TCGContext *s, MIPSInsn opc,
+                                TCGReg rt, TCGReg rs, TCGLabel *l)
+{
+    tcg_out_opc_br(s, opc, rt, rs);
+    if (l->has_value) {
+        reloc_pc16(s->code_ptr - 1, l->u.value_ptr);
+    } else {
+        tcg_out_reloc(s, s->code_ptr - 1, R_MIPS_PC16, l, 0);
+    }
 }
 
 /*
@@ -573,15 +641,14 @@ static bool tcg_out_opc_jmp(TCGContext *s, MIPSInsn opc, void *target)
     }
     tcg_debug_assert((dest & 3) == 0);
 
+    /* Since the entire code gen buffer is within the 256MB region,
+       potentially adding a nop doesn't affect the test above.  */
+    nop_forbidden_slot(s);
+
     inst = opc;
     inst |= (dest >> 2) & 0x3ffffff;
     tcg_out32(s, inst);
     return true;
-}
-
-static inline void tcg_out_nop(TCGContext *s)
-{
-    tcg_out32(s, 0);
 }
 
 static inline void tcg_out_dsll(TCGContext *s, TCGReg rd, TCGReg rt, TCGArg sa)
@@ -1049,59 +1116,136 @@ static void tcg_out_brcond(TCGContext *s, TCGCond cond, TCGReg arg1,
         [TCG_COND_GE] = OPC_BGEZ,
     };
 
-    MIPSInsn s_opc = OPC_SLTU;
-    MIPSInsn b_opc;
+    MIPSInsn b_opc = 0;
+    bool compact = false;
+    TCGReg rs = arg1, rt = arg2;
     int cmp_map;
 
-    switch (cond) {
-    case TCG_COND_EQ:
-        b_opc = OPC_BEQ;
-        break;
-    case TCG_COND_NE:
-        b_opc = OPC_BNE;
-        break;
+    /* We shouldn't expect to have arg1 == arg2, as the TCG optimizer
+       should have eliminated all such.  However, the R6 encodings do
+       not allow this situation, so e.g. if the optimizer is disabled
+       we must fall back to normal compares.  */
+    if (use_mips32r6_instructions && arg1 != arg2) {
+        switch (cond) {
+        case TCG_COND_EQ:
+        case TCG_COND_NE:
+            if (rs < rt) {
+                rs = arg2, rt = arg1;
+            }
+            b_opc = cond == TCG_COND_EQ ? OPC_BEQC : OPC_BNEC;
+            compact = true;
+            break;
 
-    case TCG_COND_LT:
-    case TCG_COND_GT:
-    case TCG_COND_LE:
-    case TCG_COND_GE:
-        if (arg2 == 0) {
-            b_opc = b_zero[cond];
-            arg2 = arg1;
-            arg1 = 0;
+        case TCG_COND_LE:
+        case TCG_COND_GT:
+            /* Swap arguments to turn LE to GE or GT to LT.
+               This also produces BLEZC/BGTZC when arg2 = 0.  */
+            rs = arg2, rt = arg1;
+            if (rt == TCG_REG_ZERO) {
+                break;
+            }
+            b_opc = cond == TCG_COND_LE ? OPC_BGEC : OPC_BLTC;
+            compact = true;
+            break;
+
+        case TCG_COND_GE:
+        case TCG_COND_LT:
+            if (rs == TCG_REG_ZERO) {
+                break;
+            }
+            /* The encoding of BGEZC/BLTZC requires rs = rt.  */
+            if (rt == TCG_REG_ZERO) {
+                rt = rs;
+            }
+            b_opc = cond == TCG_COND_GE ? OPC_BGEC : OPC_BLTC;
+            compact = true;
+            break;
+
+        case TCG_COND_LEU:
+            /* Swap arguments to turn LE to GE.  */
+            rs = arg2, rt = arg1;
+            /* FALLTHRU */
+        case TCG_COND_GEU:
+            if (rs == TCG_REG_ZERO || rt == TCG_REG_ZERO) {
+                break;
+            }
+            b_opc = OPC_BGEUC;
+            compact = true;
+            break;
+
+        case TCG_COND_GTU:
+            /* Swap arguments to turn GT to LT.  */
+            rs = arg2, rt = arg1;
+            /* FALLTHRU */
+        case TCG_COND_LTU:
+            if (rs == TCG_REG_ZERO || rt == TCG_REG_ZERO) {
+                break;
+            }
+            b_opc = OPC_BLTUC;
+            compact = true;
+            break;
+
+        default:
+            tcg_abort();
             break;
         }
-        s_opc = OPC_SLT;
-        /* FALLTHRU */
+    }
 
-    case TCG_COND_LTU:
-    case TCG_COND_GTU:
-    case TCG_COND_LEU:
-    case TCG_COND_GEU:
-        cmp_map = mips_cmp_map[cond];
-        if (cmp_map & MIPS_CMP_SWAP) {
-            TCGReg t = arg1;
-            arg1 = arg2;
-            arg2 = t;
+    if (b_opc == 0) {
+        MIPSInsn s_opc = OPC_SLTU;
+
+        switch (cond) {
+        case TCG_COND_EQ:
+            b_opc = OPC_BEQ;
+            break;
+        case TCG_COND_NE:
+            b_opc = OPC_BNE;
+            break;
+
+        case TCG_COND_LT:
+        case TCG_COND_GT:
+        case TCG_COND_LE:
+        case TCG_COND_GE:
+            if (arg2 == 0) {
+                b_opc = b_zero[cond];
+                rs = arg1;
+                rt = 0;
+                break;
+            }
+            s_opc = OPC_SLT;
+            /* FALLTHRU */
+
+        case TCG_COND_LTU:
+        case TCG_COND_GTU:
+        case TCG_COND_LEU:
+        case TCG_COND_GEU:
+            cmp_map = mips_cmp_map[cond];
+            if (cmp_map & MIPS_CMP_SWAP) {
+                TCGReg t = arg1;
+                arg1 = arg2;
+                arg2 = t;
+            }
+            tcg_out_opc_reg(s, s_opc, TCG_TMP0, arg1, arg2);
+            if (use_mips32r6_instructions) {
+                b_opc = (cmp_map & MIPS_CMP_INV ? OPC_BEQC : OPC_BNEC);
+                compact = true;
+            } else {
+                b_opc = (cmp_map & MIPS_CMP_INV ? OPC_BEQ : OPC_BNE);
+            }
+            rs = TCG_TMP0;
+            rt = TCG_REG_ZERO;
+            break;
+
+        default:
+            tcg_abort();
+            break;
         }
-        tcg_out_opc_reg(s, s_opc, TCG_TMP0, arg1, arg2);
-        b_opc = (cmp_map & MIPS_CMP_INV ? OPC_BEQ : OPC_BNE);
-        arg1 = TCG_TMP0;
-        arg2 = TCG_REG_ZERO;
-        break;
-
-    default:
-        tcg_abort();
-        break;
     }
 
-    tcg_out_opc_br(s, b_opc, arg1, arg2);
-    if (l->has_value) {
-        reloc_pc16(s->code_ptr - 1, l->u.value_ptr);
-    } else {
-        tcg_out_reloc(s, s->code_ptr - 1, R_MIPS_PC16, l, 0);
+    tcg_out_opc_br_pc16(s, b_opc, rt, rs, l);
+    if (!compact) {
+        tcg_out_nop(s);
     }
-    tcg_out_nop(s);
 }
 
 static TCGReg tcg_out_reduce_eq2(TCGContext *s, TCGReg tmp0, TCGReg tmp1,
@@ -1901,6 +2045,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
     case INDEX_op_goto_tb:
         if (s->tb_jmp_insn_offset) {
             /* direct jump method */
+            nop_forbidden_slot(s);
             s->tb_jmp_insn_offset[a0] = tcg_current_code_size(s);
             /* Avoid clobbering the address during retranslation.  */
             tcg_out32(s, OPC_J | (*(uint32_t *)s->code_ptr & 0x3ffffff));
@@ -1919,8 +2064,21 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_nop(s);
         break;
     case INDEX_op_br:
-        tcg_out_brcond(s, TCG_COND_EQ, TCG_REG_ZERO, TCG_REG_ZERO,
-                       arg_label(a0));
+        {
+            TCGLabel *l = arg_label(a0);
+            if (use_mips32r6_instructions) {
+                nop_forbidden_slot(s);
+                tcg_out32(s, OPC_BC);
+                if (l->has_value) {
+                    reloc_pc26(s->code_ptr - 1, l->u.value_ptr);
+                } else {
+                    tcg_out_reloc(s, s->code_ptr - 1, R_MIPS_PC26_S2, l, 0);
+                }
+            } else {
+                tcg_out_opc_br_pc16(s, OPC_BEQ, TCG_REG_ZERO, TCG_REG_ZERO, l);
+                tcg_out_nop(s);
+            }
+        }
         break;
 
     case INDEX_op_ld8u_i32:
