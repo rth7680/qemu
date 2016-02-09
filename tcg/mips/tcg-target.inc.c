@@ -344,7 +344,9 @@ typedef enum {
     OPC_SH       = 051 << 26,
     OPC_SW       = 053 << 26,
     OPC_BC       = 062 << 26,
+    OPC_JIC      = 066 << 26,
     OPC_LD       = 067 << 26,
+    OPC_JIALC    = 076 << 26,
     OPC_SD       = 077 << 26,
 
     OPC_SPECIAL  = 000 << 26,
@@ -1395,28 +1397,32 @@ static void tcg_out_movcond(TCGContext *s, TCGCond cond, TCGReg ret,
     }
 }
 
-static void tcg_out_call_int(TCGContext *s, tcg_insn_unit *arg, bool tail)
+static void tcg_out_call_int(TCGContext *s, tcg_insn_unit *arg,
+                             bool tail, bool want_delay)
 {
     /* Note that the ABI requires the called function's address to be
        loaded into T9, even if a direct branch is in range.  */
     tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_T9, (uintptr_t)arg);
 
     /* But do try a direct branch, allowing the cpu better insn prefetch.  */
-    if (tail) {
-        if (!tcg_out_opc_jmp(s, OPC_J, arg)) {
-            tcg_out_opc_reg(s, OPC_JR, 0, TCG_REG_T9, 0);
-        }
+    if (tcg_out_opc_jmp(s, tail ? OPC_J : OPC_JAL, arg)) {
+        /* jmp emitted */
+    } else if (use_mips32r6_instructions && !want_delay) {
+        tcg_out_opc_reg(s, tail ? OPC_JIC : OPC_JIALC, 0, TCG_REG_T9, 0);
+        return;
+    } else if (tail) {
+        tcg_out_opc_reg(s, OPC_JR, 0, TCG_REG_T9, 0);
     } else {
-        if (!tcg_out_opc_jmp(s, OPC_JAL, arg)) {
-            tcg_out_opc_reg(s, OPC_JALR, TCG_REG_RA, TCG_REG_T9, 0);
-        }
+        tcg_out_opc_reg(s, OPC_JALR, TCG_REG_RA, TCG_REG_T9, 0);
+    }
+    if (!want_delay) {
+        tcg_out_nop(s);
     }
 }
 
 static void tcg_out_call(TCGContext *s, tcg_insn_unit *arg)
 {
-    tcg_out_call_int(s, arg, false);
-    tcg_out_nop(s);
+    tcg_out_call_int(s, arg, false, false);
 }
 
 #if defined(CONFIG_SOFTMMU)
@@ -1642,7 +1648,8 @@ static void tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
     }
     i = tcg_out_call_iarg_imm(s, i, oi);
     i = tcg_out_call_iarg_imm(s, i, (intptr_t)l->raddr);
-    tcg_out_call_int(s, qemu_ld_helpers[opc & (MO_BSWAP | MO_SSIZE)], false);
+    tcg_out_call_int(s, qemu_ld_helpers[opc & (MO_BSWAP | MO_SSIZE)],
+                     false, true);
     /* delay slot */
     tcg_out_mov(s, TCG_TYPE_PTR, tcg_target_call_iarg_regs[0], TCG_AREG0);
 
@@ -1714,7 +1721,8 @@ static void tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
        computation to take place in the return address register.  */
     tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_RA, (intptr_t)l->raddr);
     i = tcg_out_call_iarg_reg(s, i, TCG_REG_RA);
-    tcg_out_call_int(s, qemu_st_helpers[opc & (MO_BSWAP | MO_SIZE)], true);
+    tcg_out_call_int(s, qemu_st_helpers[opc & (MO_BSWAP | MO_SIZE)],
+                     true, true);
     /* delay slot */
     tcg_out_mov(s, TCG_TYPE_PTR, tcg_target_call_iarg_regs[0], TCG_AREG0);
 }
