@@ -783,6 +783,7 @@ static void tcg_out_reset_tb(TCGContext *s, TCGReg reg)
 
 static void tcg_out_call(TCGContext *s, tcg_insn_unit *dest)
 {
+#if 0
     tcg_insn_unit check0 = dest[0];
     tcg_insn_unit check1 = dest[1];
 
@@ -802,6 +803,10 @@ static void tcg_out_call(TCGContext *s, tcg_insn_unit *dest)
     }
 
     tcg_out_jbr(s, INSN_BSR, INSN_JSR, TCG_REG_RA, TCG_REG_PV, dest);
+#else
+    tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_PV, (intptr_t)dest);
+    tcg_out_fmt_jmp(s, INSN_JSR, TCG_REG_RA, TCG_REG_PV, (intptr_t)dest);
+#endif
     tcg_out_reset_tb(s, TCG_REG_RA);
 }
 
