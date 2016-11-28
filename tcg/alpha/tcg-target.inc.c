@@ -220,6 +220,7 @@ typedef enum AlphaOpcode {
     INSN_LDL        = INSN_OP(0x28),
     INSN_LDQ        = INSN_OP(0x29),
     INSN_LDWU       = INSN_OP(0x0c),
+    INSN_MB         = INSN_OP(0x18) | 0x4400,
     INSN_MSKBL      = INSN_OP(0x12) | INSN_FUNC2(0x02),
     INSN_MSKLL      = INSN_OP(0x12) | INSN_FUNC2(0x22),
     INSN_MSKWL      = INSN_OP(0x12) | INSN_FUNC2(0x12),
@@ -241,6 +242,7 @@ typedef enum AlphaOpcode {
     INSN_SUBL       = INSN_OP(0x10) | INSN_FUNC2(0x09),
     INSN_SUBQ       = INSN_OP(0x10) | INSN_FUNC2(0x29),
     INSN_UMULH      = INSN_OP(0x13) | INSN_FUNC2(0x30),
+    INSN_WMB        = INSN_OP(0x18) | 0x4000,
     INSN_XOR        = INSN_OP(0x11) | INSN_FUNC2(0x40),
     INSN_ZAPNOT     = INSN_OP(0x12) | INSN_FUNC2(0x31),
 
@@ -1673,6 +1675,10 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_qemu_st(s, arg0, arg1, arg2);
         break;
 
+    case INDEX_op_mb:
+        tcg_out32(s, (arg2 & TCG_MO_ALL) == TCG_MO_ST_ST ? INSN_WMB : INSN_MB);
+        break;
+
     case INDEX_op_mov_i32:      /* Always emitted via tcg_out_mov. */
     case INDEX_op_mov_i64:
     case INDEX_op_movi_i32:     /* Always emitted via tcg_out_movi. */
@@ -1687,6 +1693,7 @@ static const TCGTargetOpDef alpha_op_defs[] = {
     { INDEX_op_exit_tb,         { } },
     { INDEX_op_goto_tb,         { } },
     { INDEX_op_br,              { } },
+    { INDEX_op_mb,              { } },
 
     { INDEX_op_ld8u_i32,        { "r", "r" } },
     { INDEX_op_ld8s_i32,        { "r", "r" } },
