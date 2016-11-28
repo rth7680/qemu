@@ -122,14 +122,31 @@ typedef enum TCGReg {
 #define TCG_TARGET_HAS_nor_i32          0
 #define TCG_TARGET_HAS_nor_i64          0
 
-/* We can do better for specific cases of deposit.  */
+/* We can do better for specific cases of deposit and extract.  */
 #define TCG_TARGET_HAS_deposit_i32      1
 #define TCG_TARGET_HAS_deposit_i64      1
+#define TCG_TARGET_HAS_extract_i32      1
+#define TCG_TARGET_HAS_extract_i64      1
+#define TCG_TARGET_HAS_sextract_i32     0
+#define TCG_TARGET_HAS_sextract_i64     0
 
-#define TCG_TARGET_deposit_valid(ofs, len) \
-  (((ofs) & 7) == 0 && ((len) == 8 || (len) == 16 || (len) == 32))
+static inline bool TCG_TARGET_deposit_valid(unsigned ofs, unsigned len)
+{
+    return ofs % 8 == 0 && (len == 8 || len == 16 || len == 32);
+}
+
 #define TCG_TARGET_deposit_i32_valid  TCG_TARGET_deposit_valid
 #define TCG_TARGET_deposit_i64_valid  TCG_TARGET_deposit_valid
+
+static inline bool TCG_TARGET_extract_valid(unsigned ofs, unsigned len)
+{
+    /* We can extract 8, 16, or 32 bit quantities, or the 24 bits [8:31].  */
+    return ofs % 8 == 0 && (len == 8 || len == 16 || len == 32
+                            || ofs + len == 32);
+}
+
+#define TCG_TARGET_extract_i32_valid  TCG_TARGET_extract_valid
+#define TCG_TARGET_extract_i64_valid  TCG_TARGET_extract_valid
 
 /* We require special attention for truncation.  */
 #define TCG_TARGET_HAS_extrl_i64_i32    1
@@ -156,6 +173,10 @@ typedef enum TCGReg {
 #define TCG_TARGET_HAS_mulsh_i32        0
 #define TCG_TARGET_HAS_mulsh_i64        0
 #define TCG_TARGET_HAS_muluh_i32        0
+#define TCG_TARGET_HAS_clz_i32          0
+#define TCG_TARGET_HAS_ctz_i32          0
+#define TCG_TARGET_HAS_clz_i64          0
+#define TCG_TARGET_HAS_ctz_i64          0
 
 #define TCG_TARGET_HAS_GUEST_BASE
 

@@ -204,6 +204,7 @@ typedef enum AlphaOpcode {
     INSN_EXTBL      = INSN_OP(0x12) | INSN_FUNC2(0x06),
     INSN_EXTWH      = INSN_OP(0x12) | INSN_FUNC2(0x5a),
     INSN_EXTWL      = INSN_OP(0x12) | INSN_FUNC2(0x16),
+    INSN_EXTLL      = INSN_OP(0x12) | INSN_FUNC2(0x26),
     INSN_INSBL      = INSN_OP(0x12) | INSN_FUNC2(0x0b),
     INSN_INSLH      = INSN_OP(0x12) | INSN_FUNC2(0x67),
     INSN_INSLL      = INSN_OP(0x12) | INSN_FUNC2(0x2b),
@@ -850,6 +851,37 @@ static void tcg_out_deposit(TCGContext *s, TCGReg dest, TCGReg arg1,
         tcg_out_fmt_opi(s, msk_opc, arg1, bofs, dest);
         tcg_out_fmt_opr(s, is_64 ? INSN_BIS : INSN_ADDL, dest, TMP_REG1, dest);
     }
+}
+
+static void tcg_out_extract(TCGContext *s, TCGReg dest, TCGReg arg,
+                            int ofs, int len, bool is_64)
+{
+    AlphaOpcode opc;
+    int bofs = ofs >> 3;
+
+    switch (len) {
+    case 8:
+        opc = INSN_EXTBL;
+        break;
+    case 16:
+        opc = INSN_EXTWL;
+        break;
+    case 24:
+        tcg_debug_assert(ofs == 8);
+        tcg_out_fmt_opi(s, INSN_INSLH, arg, 7, dest);
+	return;
+    case 32:
+	if (!is_64) {
+	    tcg_out_mov(s, TCG_TYPE_I32, dest, arg);
+	    return;
+	}
+        opc = INSN_EXTLL;
+        break;
+    default:
+        tcg_abort();
+    }
+
+    tcg_out_fmt_opi(s, opc, arg, bofs, dest);
 }
 
 /* The low bit of these entries indicates that the result of
@@ -1507,6 +1539,13 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_deposit(s, arg0, arg1, arg2, args[3], args[4], 1);
         break;
 
+    case INDEX_op_extract_i32:
+        tcg_out_extract(s, arg0, arg1, arg2, args[3], 0);
+        break;
+    case INDEX_op_extract_i64:
+        tcg_out_extract(s, arg0, arg1, arg2, args[3], 1);
+        break;
+
     case INDEX_op_brcond_i32:
         arg1 = (int32_t)arg1;
     case INDEX_op_brcond_i64:
@@ -1643,6 +1682,7 @@ static const TCGTargetOpDef alpha_op_defs[] = {
     { INDEX_op_sar_i32,         { "r", "rJ", "rI" } },
 
     { INDEX_op_deposit_i32,     { "r", "rJ", "rJ" } },
+    { INDEX_op_extract_i32,     { "r", "r" } },
 
     { INDEX_op_div_i32,         { "c", "a", "b" } },
     { INDEX_op_rem_i32,         { "c", "a", "b" } },
@@ -1687,6 +1727,7 @@ static const TCGTargetOpDef alpha_op_defs[] = {
     { INDEX_op_sar_i64,         { "r", "rJ", "rI" } },
 
     { INDEX_op_deposit_i64,     { "r", "rJ", "rJ" } },
+    { INDEX_op_extract_i64,     { "r", "r" } },
 
     { INDEX_op_div_i64,         { "c", "a", "b" } },
     { INDEX_op_rem_i64,         { "c", "a", "b" } },
