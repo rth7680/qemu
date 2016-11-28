@@ -74,6 +74,15 @@ typedef enum TCGReg {
     TCG_REG_ZERO = HW_TO_TCG_REGNO(31)
 } TCGReg;
 
+enum {
+    TCG_AMASK_BWX      = 0x00000001,
+    TCG_AMASK_FIX      = 0x00000002,
+    TCG_AMASK_CIX      = 0x00000004,
+    TCG_AMASK_MVI      = 0x00000100,
+    TCG_AMASK_TRAP     = 0x00000200,
+    TCG_AMASK_PREFETCH = 0x00001000,
+};
+
 /* Used for function call generation.  */
 #define TCG_REG_CALL_STACK TCG_REG_SP
 #define TCG_TARGET_STACK_ALIGN 16
@@ -152,6 +161,11 @@ static inline bool TCG_TARGET_extract_valid(unsigned ofs, unsigned len)
 #define TCG_TARGET_HAS_extrl_i64_i32    1
 #define TCG_TARGET_HAS_extrh_i64_i32    1
 
+/* These are present with the Counting Integer eXtension.  */
+#define TCG_TARGET_HAS_clz_i64    (!__builtin_alpha_amask(TCG_AMASK_CIX))
+#define TCG_TARGET_HAS_ctz_i64    (!__builtin_alpha_amask(TCG_AMASK_CIX))
+#define TCG_TARGET_HAS_ctpop_i64  (!__builtin_alpha_amask(TCG_AMASK_CIX))
+
 /* The default implementations of these are fine.  */
 #define TCG_TARGET_HAS_neg_i32          0
 #define TCG_TARGET_HAS_neg_i64          0
@@ -175,8 +189,7 @@ static inline bool TCG_TARGET_extract_valid(unsigned ofs, unsigned len)
 #define TCG_TARGET_HAS_muluh_i32        0
 #define TCG_TARGET_HAS_clz_i32          0
 #define TCG_TARGET_HAS_ctz_i32          0
-#define TCG_TARGET_HAS_clz_i64          0
-#define TCG_TARGET_HAS_ctz_i64          0
+#define TCG_TARGET_HAS_ctpop_i32        0
 
 #define TCG_TARGET_HAS_GUEST_BASE
 

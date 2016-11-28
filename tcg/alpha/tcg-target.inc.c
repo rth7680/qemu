@@ -200,6 +200,9 @@ typedef enum AlphaOpcode {
     INSN_CMPLT      = INSN_OP(0x10) | INSN_FUNC2(0x4d),
     INSN_CMPULE     = INSN_OP(0x10) | INSN_FUNC2(0x3d),
     INSN_CMPULT     = INSN_OP(0x10) | INSN_FUNC2(0x1d),
+    INSN_CTPOP      = INSN_OP(0x1C) | INSN_FUNC2(0x30),
+    INSN_CTLZ       = INSN_OP(0x1C) | INSN_FUNC2(0x32),
+    INSN_CTTZ       = INSN_OP(0x1C) | INSN_FUNC2(0x33),
     INSN_EQV        = INSN_OP(0x11) | INSN_FUNC2(0x48),
     INSN_EXTBL      = INSN_OP(0x12) | INSN_FUNC2(0x06),
     INSN_EXTWH      = INSN_OP(0x12) | INSN_FUNC2(0x5a),
@@ -671,6 +674,24 @@ static void tgen_bswap(TCGContext *s, TCGMemOp memop, TCGReg ra, TCGReg rc)
 
     default:
         tcg_abort();
+    }
+}
+
+static void tgen_ctxz(TCGContext *s, AlphaOpcode opc, TCGReg dest, TCGReg arg1,
+                      TCGArg arg2, bool c2)
+{
+    if (c2 && arg2 == 64) {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, dest);
+    } else if (!c2 && dest == arg2) {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, TMP_REG1);
+        tcg_out_movcond(s, TCG_COND_NE, dest, arg1, 0, 1, TMP_REG1, 0);
+    } else if (dest != arg1) {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, dest);
+        tcg_out_movcond(s, TCG_COND_EQ, dest, arg1, 0, 1, arg2, c2);
+    } else {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, TMP_REG1);
+        tcg_out_movcond(s, TCG_COND_EQ, TMP_REG1, arg1, 0, 1, arg2, c2);
+        tcg_out_mov(s, TCG_TYPE_REG, dest, TMP_REG1);
     }
 }
 
@@ -1627,6 +1648,16 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tgen_bswap(s, c, arg1, arg0);
         break;
 
+    case INDEX_op_clz_i64:
+        tgen_ctxz(s, INSN_CTLZ, arg0, arg1, arg2, c2);
+        break;
+    case INDEX_op_ctz_i64:
+        tgen_ctxz(s, INSN_CTTZ, arg0, arg1, arg2, c2);
+        break;
+    case INDEX_op_ctpop_i64:
+        tcg_out_fmt_opr(s, INSN_CTPOP, TCG_REG_ZERO, arg1, arg0);
+        break;
+
     case INDEX_op_qemu_ld_i32:
         /* Make sure 32-bit data stays sign-extended.  */
         if ((get_memop(arg2) & MO_SIZE) == MO_32) {
@@ -1697,6 +1728,10 @@ static const TCGTargetOpDef alpha_op_defs[] = {
     { INDEX_op_extu_i32_i64,    { "r", "r" } },
     { INDEX_op_extrl_i64_i32,   { "r", "r" } },
     { INDEX_op_extrh_i64_i32,   { "r", "r" } },
+
+    { INDEX_op_clz_i64,         { "r", "r", "rI" },
+    { INDEX_op_ctz_i64,         { "r", "r", "rI" },
+    { INDEX_op_ctpop_i64,       { "r", "r" },
 
     { INDEX_op_ld8u_i64,        { "r", "r" } },
     { INDEX_op_ld8s_i64,        { "r", "r" } },
