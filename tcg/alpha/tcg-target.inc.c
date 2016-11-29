@@ -257,27 +257,28 @@ typedef enum AlphaOpcode {
 /*
  * Given a constraint, fill in the available register set or constant range.
  */
-static int target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
+static const char *target_parse_constraint(TCGArgConstraint *ct,
+                                           const char *ct_str, TCGType type)
 {
-    const char *ct_str = *pct_str;
+    int c;
 
-    switch (ct_str[0]) {
+    switch (*ct_str++) {
     case 'r':
         /* Constaint 'r' means any register is okay.  */
-        ct->ct |= TCG_CT_REG;
+        c = TCG_CT_REG;
         tcg_regset_set32(ct->u.regs, 0, 0xffffffffu);
         break;
 
     case 'a':
         /* Constraint 'a' means $24, one of the division inputs.  */
-        ct->ct |= TCG_CT_REG;
+        c = TCG_CT_REG;
         tcg_regset_clear(ct->u.regs);
         tcg_regset_set_reg(ct->u.regs, TCG_REG_T10);
         break;
 
     case 'b':
         /* Constraint 'b' means $25, one of the division inputs.  */
-        ct->ct |= TCG_CT_REG;
+        c = TCG_CT_REG;
         tcg_regset_clear(ct->u.regs);
         tcg_regset_set_reg(ct->u.regs, TCG_REG_T11);
         break;
@@ -285,7 +286,7 @@ static int target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
     case 'c':
         /* Constraint 'c' means $27, the call procedure vector,
            as well as the division output.  */
-        ct->ct |= TCG_CT_REG;
+        c = TCG_CT_REG;
         tcg_regset_clear(ct->u.regs);
         tcg_regset_set_reg(ct->u.regs, TCG_REG_PV);
         break;
@@ -293,7 +294,7 @@ static int target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
     case 'L':
         /* Constraint for qemu_ld/st.  The extra reserved registers are
            used for passing the parameters to the helper function.  */
-        ct->ct |= TCG_CT_REG;
+        c = TCG_CT_REG;
         tcg_regset_set32(ct->u.regs, 0, 0xffffffffu);
         tcg_regset_reset_reg(ct->u.regs, TCG_REG_A0);
         tcg_regset_reset_reg(ct->u.regs, TCG_REG_A1);
@@ -301,31 +302,26 @@ static int target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
 
     case 'I':
         /* Constraint 'I' means an immediate 0 ... 255.  */
-        ct->ct |= TCG_CT_CONST_U8;
+        c = TCG_CT_CONST_U8;
         break;
-
     case 'J':
         /* Constraint 'J' means the immediate 0.  */
-        ct->ct |= TCG_CT_CONST_ZERO;
+        c = TCG_CT_CONST_ZERO;
         break;
-
     case 'K':
         /* Constraint 'K' means an immediate -255..255.  */
-        ct->ct |= TCG_CT_CONST_PN255;
+        c = TCG_CT_CONST_PN255;
         break;
-
     case 'M':
         /* Constraint 'M' means constants used with AND/BIC/ZAPNOT.  */
-        ct->ct |= TCG_CT_CONST_ANDI;
+        c = TCG_CT_CONST_ANDI;
         break;
-
     default:
-        return -1;
+        return NULL;
     }
 
-    ct_str++;
-    *pct_str = ct_str;
-    return 0;
+    ct->ct |= c;
+    return ct_str;
 }
 
 static int tcg_match_zapnot(tcg_target_long val)
@@ -679,24 +675,6 @@ static void tgen_bswap(TCGContext *s, TCGMemOp memop, TCGReg ra, TCGReg rc)
     }
 }
 
-static void tgen_ctxz(TCGContext *s, AlphaOpcode opc, TCGReg dest, TCGReg arg1,
-                      TCGArg arg2, bool c2)
-{
-    if (c2 && arg2 == 64) {
-        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, dest);
-    } else if (!c2 && dest == arg2) {
-        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, TMP_REG1);
-        tcg_out_movcond(s, TCG_COND_NE, dest, arg1, 0, 1, TMP_REG1, 0);
-    } else if (dest != arg1) {
-        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, dest);
-        tcg_out_movcond(s, TCG_COND_EQ, dest, arg1, 0, 1, arg2, c2);
-    } else {
-        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, TMP_REG1);
-        tcg_out_movcond(s, TCG_COND_EQ, TMP_REG1, arg1, 0, 1, arg2, c2);
-        tcg_out_mov(s, TCG_TYPE_REG, dest, TMP_REG1);
-    }
-}
-
 static void tcg_out_ld_sz(TCGContext *s, TCGMemOp memop, TCGReg ra, TCGReg rb,
                           tcg_target_long disp)
 {
@@ -1020,6 +998,24 @@ static void tcg_out_brcond(TCGContext *s, TCGCond cond, TCGReg arg1,
     }
 
     tcg_out_br_label(s, opc, arg1, l);
+}
+
+static void tgen_ctxz(TCGContext *s, AlphaOpcode opc, TCGReg dest,
+                      TCGReg arg1, TCGArg arg2, bool c2)
+{
+    if (c2 && arg2 == 64) {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, dest);
+    } else if (!c2 && dest == arg2) {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, TMP_REG2);
+        tcg_out_movcond(s, TCG_COND_NE, dest, arg1, 0, 1, TMP_REG2, 0);
+    } else if (dest != arg1) {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, dest);
+        tcg_out_movcond(s, TCG_COND_EQ, dest, arg1, 0, 1, arg2, c2);
+    } else {
+        tcg_out_fmt_opr(s, opc, TCG_REG_ZERO, arg1, TMP_REG2);
+        tcg_out_movcond(s, TCG_COND_EQ, TMP_REG2, arg1, 0, 1, arg2, c2);
+        tcg_out_mov(s, TCG_TYPE_REG, dest, TMP_REG2);
+    }
 }
 
 /* Note that these functions don't have normal C calling conventions.  */
@@ -1736,9 +1732,9 @@ static const TCGTargetOpDef alpha_op_defs[] = {
     { INDEX_op_extrl_i64_i32,   { "r", "r" } },
     { INDEX_op_extrh_i64_i32,   { "r", "r" } },
 
-    { INDEX_op_clz_i64,         { "r", "r", "rI" },
-    { INDEX_op_ctz_i64,         { "r", "r", "rI" },
-    { INDEX_op_ctpop_i64,       { "r", "r" },
+    { INDEX_op_clz_i64,         { "r", "r", "rI" } },
+    { INDEX_op_ctz_i64,         { "r", "r", "rI" } },
+    { INDEX_op_ctpop_i64,       { "r", "r" } },
 
     { INDEX_op_ld8u_i64,        { "r", "r" } },
     { INDEX_op_ld8s_i64,        { "r", "r" } },
@@ -1799,6 +1795,17 @@ static const TCGTargetOpDef alpha_op_defs[] = {
     { -1 },
 };
 
+static const TCGTargetOpDef *tcg_target_op_def(TCGOpcode op)
+{
+    int i, n = ARRAY_SIZE(alpha_op_defs);
+
+    for (i = 0; i < n; ++i) {
+        if (alpha_op_defs[i].op == op) {
+            return &alpha_op_defs[i];
+        }
+    }
+    return NULL;
+}
 
 /*
  * Generate global QEMU prologue and epilogue code
@@ -1908,8 +1915,6 @@ void tcg_target_init(TCGContext *s)
     if (USE_REG_TB) {
         tcg_regset_set_reg(s->reserved_regs, TCG_REG_TB);
     }
-
-    tcg_add_target_add_op_defs(alpha_op_defs);
 }
 
 #ifdef USE_DIRECT_JUMP
