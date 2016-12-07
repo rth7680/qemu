@@ -535,6 +535,7 @@ static inline void cpu_handle_interrupt(CPUState *cpu,
 
 
     if (unlikely(atomic_read(&cpu->exit_request) || replay_has_interrupt())) {
+        atomic_set(&cpu->exit_request, 0);
         cpu->exception_index = EXCP_INTERRUPT;
         cpu_loop_exit(cpu);
     }
