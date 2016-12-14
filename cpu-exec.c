@@ -29,6 +29,7 @@
 #include "qemu/rcu.h"
 #include "exec/tb-hash.h"
 #include "exec/log.h"
+#include "qemu/main-loop.h"
 #if defined(TARGET_I386) && !defined(CONFIG_USER_ONLY)
 #include "hw/i386/apic.h"
 #endif
@@ -384,12 +385,13 @@ static inline bool cpu_handle_halt(CPUState *cpu)
         if ((cpu->interrupt_request & CPU_INTERRUPT_POLL)
             && replay_interrupt()) {
             X86CPU *x86_cpu = X86_CPU(cpu);
+            qemu_mutex_lock_iothread();
             apic_poll_irq(x86_cpu->apic_state);
             cpu_reset_interrupt(cpu, CPU_INTERRUPT_POLL);
+            qemu_mutex_unlock_iothread();
         }
 #endif
         if (!cpu_has_work(cpu)) {
-            current_cpu = NULL;
             return true;
         }
 
@@ -439,7 +441,9 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
 #else
             if (replay_exception()) {
                 CPUClass *cc = CPU_GET_CLASS(cpu);
+                qemu_mutex_lock_iothread();
                 cc->do_interrupt(cpu);
+                qemu_mutex_unlock_iothread();
                 cpu->exception_index = -1;
             } else if (!replay_has_interrupt()) {
                 /* give a chance to iothread in replay mode */
@@ -465,9 +469,11 @@ static inline void cpu_handle_interrupt(CPUState *cpu,
                                         TranslationBlock **last_tb)
 {
     CPUClass *cc = CPU_GET_CLASS(cpu);
-    int interrupt_request = cpu->interrupt_request;
 
-    if (unlikely(interrupt_request)) {
+    if (unlikely(atomic_read(&cpu->interrupt_request))) {
+        int interrupt_request;
+        qemu_mutex_lock_iothread();
+        interrupt_request = cpu->interrupt_request;
         if (unlikely(cpu->singlestep_enabled & SSTEP_NOIRQ)) {
             /* Mask out external interrupts for this step. */
             interrupt_request &= ~CPU_INTERRUPT_SSTEP_MASK;
@@ -522,9 +528,13 @@ static inline void cpu_handle_interrupt(CPUState *cpu,
                the program flow was changed */
             *last_tb = NULL;
         }
+
+        /* If we exit via cpu_loop_exit/longjmp it is reset in cpu_exec */
+        qemu_mutex_unlock_iothread();
     }
+
+
     if (unlikely(atomic_read(&cpu->exit_request) || replay_has_interrupt())) {
-        atomic_set(&cpu->exit_request, 0);
         cpu->exception_index = EXCP_INTERRUPT;
         cpu_loop_exit(cpu);
     }
@@ -549,9 +559,8 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
         /* Something asked us to stop executing
          * chained TBs; just continue round the main
          * loop. Whatever requested the exit will also
-         * have set something else (eg exit_request or
-         * interrupt_request) which we will handle
-         * next time around the loop.  But we need to
+         * have set something else (eg interrupt_request) which we
+         * will handle next time around the loop.  But we need to
          * ensure the tcg_exit_req read in generated code
          * comes before the next read of cpu->exit_request
          * or cpu->interrupt_request.
@@ -605,12 +614,7 @@ int cpu_exec(CPUState *cpu)
         return EXCP_HALTED;
     }
 
-    atomic_mb_set(&tcg_current_cpu, cpu);
     rcu_read_lock();
-
-    if (unlikely(atomic_mb_read(&exit_request))) {
-        cpu->exit_request = 1;
-    }
 
     cc->cpu_exec_enter(cpu);
 
@@ -653,18 +657,17 @@ int cpu_exec(CPUState *cpu)
             g_assert(cpu == current_cpu);
             g_assert(cc == CPU_GET_CLASS(cpu));
 #endif /* buggy compiler */
+
             cpu->can_do_io = 1;
             tb_lock_reset();
+            if (qemu_mutex_iothread_locked()) {
+                qemu_mutex_unlock_iothread();
+            }
         }
     } /* for(;;) */
 
     cc->cpu_exec_exit(cpu);
     rcu_read_unlock();
 
-    /* fail safe : never use current_cpu outside cpu_exec() */
-    current_cpu = NULL;
-
-    /* Does not need atomic_mb_set because a spurious wakeup is okay.  */
-    atomic_set(&tcg_current_cpu, NULL);
     return ret;
 }
