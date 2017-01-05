@@ -548,10 +548,12 @@ static void fd_trans_register(int fd, TargetFdTrans *trans)
                (target_fd_max - oldmax) * sizeof(TargetFdTrans *));
     }
     target_fd_trans[fd] = trans;
+    //gemu_log("\n%s:%d: fd=%d\n", __FUNCTION__, __LINE__, fd);
 }
 
 static void fd_trans_unregister(int fd)
 {
+    //gemu_log("\n%s:%d: fd=%d\n", __FUNCTION__, __LINE__, fd);
     if (fd >= 0 && fd < target_fd_max) {
         target_fd_trans[fd] = NULL;
     }
@@ -9367,8 +9369,10 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 #endif
 #ifdef TARGET_NR_socket
     case TARGET_NR_socket:
+        //gemu_log("\n%s:%d: before do_socket\n", __FUNCTION__, __LINE__);
         ret = do_socket(arg1, arg2, arg3);
-        fd_trans_unregister(ret);
+        //gemu_log("%s:%d: after do_socket ret=%d\n", __FUNCTION__, __LINE__, ret);
+        //fd_trans_unregister(ret);
         break;
 #endif
 #ifdef TARGET_NR_socketpair
