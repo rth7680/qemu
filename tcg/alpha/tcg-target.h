@@ -166,6 +166,8 @@ static inline bool TCG_TARGET_extract_valid(unsigned ofs, unsigned len)
 #define TCG_TARGET_HAS_ctz_i64    (!__builtin_alpha_amask(TCG_AMASK_CIX))
 #define TCG_TARGET_HAS_ctpop_i64  (!__builtin_alpha_amask(TCG_AMASK_CIX))
 
+#define TCG_TARGET_HAS_goto_ptr         0
+
 /* The default implementations of these are fine.  */
 #define TCG_TARGET_HAS_neg_i32          0
 #define TCG_TARGET_HAS_neg_i64          0
