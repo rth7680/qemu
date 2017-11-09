@@ -284,6 +284,8 @@ static TCGOpcode ld_to_mov(TCGOpcode op)
         return INDEX_op_mov_i32;
     case INDEX_op_ld_i64:
         return INDEX_op_mov_i64;
+    case INDEX_op_ld_vec:
+        return INDEX_op_mov_vec;
     default:
         tcg_abort();
     }
@@ -785,6 +787,9 @@ static int ldst_size(const TCGOp *op)
     case INDEX_op_st_i64:
     case INDEX_op_ld_i64:
         return 8;
+    case INDEX_op_ld_vec:
+    case INDEX_op_st_vec:
+        return 8 << TCGOP_VECL(op);
     default:
         /* Some unsupported opcode? */
         tcg_abort();
@@ -1640,6 +1645,7 @@ void tcg_optimize(TCGContext *s)
         CASE_OP_32_64(st16):
         CASE_OP_32_64(st):
         case INDEX_op_st32_i64:
+        case INDEX_op_st_vec:
             if (op->args[1] == tcgv_ptr_arg(cpu_env)) {
                 remove_ml_range(op->args[2], ldst_size(op));
                 new_ml(op->args[2], ldst_size(op), arg_temp(op->args[0]));
@@ -1657,13 +1663,16 @@ void tcg_optimize(TCGContext *s)
         CASE_OP_32_64(ld):
         case INDEX_op_ld32s_i64:
         case INDEX_op_ld32u_i64:
+        case INDEX_op_ld_vec:
             /* Only loads that are relative to ENV can be handled.  */
             if (op->args[1] == tcgv_ptr_arg(cpu_env)) {
                 ml = find_ml(op->args[2], ldst_size(op),
                              arg_temp(op->args[0])->base_type);
                 if (ml && ml->copy) {
                     TCGOpcode re = ld_to_mov(opc);
-                    if (re == INDEX_op_mov_i32 || re == INDEX_op_mov_i64) {
+                    if (re == INDEX_op_mov_i32
+                        || re == INDEX_op_mov_i64
+                        || re == INDEX_op_mov_vec) {
                         /* No sign/zero extension needed. OP is a move.
                            Handle this case separately to track copies.  */
                         TCGTemp *copy = find_better_copy(s, ml->copy);
