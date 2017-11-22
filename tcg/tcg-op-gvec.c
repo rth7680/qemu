@@ -180,15 +180,16 @@ static void do_dup_i32(unsigned vece, uint32_t dofs, uint32_t oprsz,
                        uint32_t maxsz, TCGv_i32 in, uint32_t in_c,
                        void (*ool)(TCGv_ptr, TCGv_i32, TCGv_i32))
 {
+    TCGType type;
     TCGv_vec t_vec;
     uint32_t i;
 
     if (TCG_TARGET_HAS_v256 && check_size_impl(oprsz, 32)) {
-        t_vec = tcg_temp_new_vec(TCG_TYPE_V256);
+        type = TCG_TYPE_V256;
     } else if (TCG_TARGET_HAS_v128 && check_size_impl(oprsz, 16)) {
-        t_vec = tcg_temp_new_vec(TCG_TYPE_V128);
+        type = TCG_TYPE_V128;
     } else if (TCG_TARGET_HAS_v64 && check_size_impl(oprsz, 8)) {
-        t_vec = tcg_temp_new_vec(TCG_TYPE_V64);
+        type = TCG_TYPE_V64;
     } else  {
         TCGv_i32 t_i32 = in ? in : tcg_const_i32(in_c);
 
@@ -216,6 +217,7 @@ static void do_dup_i32(unsigned vece, uint32_t dofs, uint32_t oprsz,
         }
     }
 
+    t_vec = tcg_temp_new_vec(type);
     if (in) {
         tcg_gen_dup_i32_vec(vece, t_vec, in);
     } else {
@@ -238,6 +240,7 @@ static void do_dup_i32(unsigned vece, uint32_t dofs, uint32_t oprsz,
             tcg_gen_stl_vec(t_vec, cpu_env, dofs + i, TCG_TYPE_V64);
         }
     }
+    tcg_temp_free_vec(t_vec);
 
  done:
     tcg_debug_assert(i == oprsz);
@@ -250,16 +253,17 @@ static void do_dup_i32(unsigned vece, uint32_t dofs, uint32_t oprsz,
 static void do_dup_i64(unsigned vece, uint32_t dofs, uint32_t oprsz,
                        uint32_t maxsz, TCGv_i64 in, uint64_t in_c)
 {
+    TCGType type;
     TCGv_vec t_vec;
     uint32_t i;
 
     if (TCG_TARGET_HAS_v256 && check_size_impl(oprsz, 32)) {
-        t_vec = tcg_temp_new_vec(TCG_TYPE_V256);
+        type = TCG_TYPE_V256;
     } else if (TCG_TARGET_HAS_v128 && check_size_impl(oprsz, 16)) {
-        t_vec = tcg_temp_new_vec(TCG_TYPE_V128);
+        type = TCG_TYPE_V128;
     } else if (TCG_TARGET_HAS_v64 && TCG_TARGET_REG_BITS == 32
                && check_size_impl(oprsz, 8)) {
-        t_vec = tcg_temp_new_vec(TCG_TYPE_V64);
+        type = TCG_TYPE_V64;
     } else {
         TCGv_i64 t_i64 = in ? in : tcg_const_i64(in_c);
 
@@ -287,6 +291,7 @@ static void do_dup_i64(unsigned vece, uint32_t dofs, uint32_t oprsz,
         }
     }
 
+    t_vec = tcg_temp_new_vec(type);
     if (in) {
         tcg_gen_dup_i64_vec(vece, t_vec, in);
     } else {
@@ -309,6 +314,7 @@ static void do_dup_i64(unsigned vece, uint32_t dofs, uint32_t oprsz,
             tcg_gen_stl_vec(t_vec, cpu_env, dofs + i, TCG_TYPE_V64);
         }
     }
+    tcg_temp_free_vec(t_vec);
 
  done:
     tcg_debug_assert(i == oprsz);
