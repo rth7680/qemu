@@ -4,8 +4,8 @@
 /* A small part of this API is split into its own header */
 #include "qemu/log-for-trace.h"
 
-/* Private global variable, don't use */
-extern FILE *qemu_logfile;
+/* Private global variable, don't use.  */
+FILE *qemu_logfile0(void);
 
 /* 
  * The new API:
@@ -14,19 +14,11 @@ extern FILE *qemu_logfile;
 
 /* Log settings checking macros: */
 
-/* Returns true if qemu_log() will really write somewhere
- */
-static inline bool qemu_log_enabled(void)
-{
-    return qemu_logfile != NULL;
-}
+/* Returns true if qemu_log() will really write somewhere.  */
+bool qemu_log_enabled(void);
 
-/* Returns true if qemu_log() will write somewhere else than stderr
- */
-static inline bool qemu_log_separate(void)
-{
-    return qemu_logfile != NULL && qemu_logfile != stderr;
-}
+/* Returns true if qemu_log() will write somewhere else than stderr.  */
+bool qemu_log_separate(void);
 
 #define CPU_LOG_TB_OUT_ASM (1 << 0)
 #define CPU_LOG_TB_IN_ASM  (1 << 1)
@@ -55,25 +47,18 @@ static inline bool qemu_log_separate(void)
 
 static inline void qemu_log_lock(void)
 {
-    qemu_flockfile(qemu_logfile);
+    qemu_flockfile(qemu_logfile0());
 }
 
 static inline void qemu_log_unlock(void)
 {
-    qemu_funlockfile(qemu_logfile);
+    qemu_funlockfile(qemu_logfile0());
 }
 
 /* Logging functions: */
 
-/* vfprintf-like logging function
- */
-static inline void GCC_FMT_ATTR(1, 0)
-qemu_log_vprintf(const char *fmt, va_list va)
-{
-    if (qemu_logfile) {
-        vfprintf(qemu_logfile, fmt, va);
-    }
-}
+/* vfprintf-like logging function.  */
+void GCC_FMT_ATTR(1, 0) qemu_log_vprintf(const char *fmt, va_list va);
 
 /* log only if a bit is set on the current loglevel mask:
  * @mask: bit to check in the mask

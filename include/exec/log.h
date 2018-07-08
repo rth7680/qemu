@@ -15,8 +15,9 @@
  */
 static inline void log_cpu_state(CPUState *cpu, int flags)
 {
-    if (qemu_log_enabled()) {
-        cpu_dump_state(cpu, qemu_logfile, flags);
+    FILE *f = qemu_logfile0();
+    if (f != NULL) {
+        cpu_dump_state(cpu, f, flags);
     }
 }
 
@@ -40,19 +41,19 @@ static inline void log_cpu_state_mask(int mask, CPUState *cpu, int flags)
 static inline void log_target_disas(CPUState *cpu, target_ulong start,
                                     target_ulong len)
 {
-    target_disas(qemu_logfile, cpu, start, len);
+    target_disas(qemu_logfile0(), cpu, start, len);
 }
 
 static inline void log_disas(void *code, unsigned long size)
 {
-    disas(qemu_logfile, code, size);
+    disas(qemu_logfile0(), code, size);
 }
 
 #if defined(CONFIG_USER_ONLY)
 /* page_dump() output to the log file: */
 static inline void log_page_dump(void)
 {
-    page_dump(qemu_logfile);
+    page_dump(qemu_logfile0());
 }
 #endif
 #endif

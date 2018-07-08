@@ -24,21 +24,65 @@
 #include "qapi/error.h"
 #include "qemu/cutils.h"
 #include "trace/control.h"
+#include <sys/syscall.h>
 
+static bool qemu_log_enabled1;
+static __thread FILE *qemu_logfile1;
+static __thread char logfile_buf[4096];
 static char *logfilename;
-FILE *qemu_logfile;
 int qemu_loglevel;
-static int log_append = 0;
 static GArray *debug_regions;
+
+static int gettid(void)
+{
+    return syscall(SYS_gettid);
+}
+
+FILE *qemu_logfile0(void)
+{
+    FILE *f;
+
+    if (!qemu_log_enabled1) {
+        return NULL;
+    }
+    f = qemu_logfile1;
+    if (f == NULL) {
+        size_t len = strlen(logfilename) + 7;
+        char *name = alloca(len);
+        snprintf(name, len, "%s.%d", logfilename, gettid());
+
+        qemu_logfile1 = f = fopen(name, "w");
+        if (f == NULL) {
+            perror(name);
+            _exit(1);
+        }
+        /* Must avoid mmap() usage of glibc by setting a buffer by hand.  */
+        setvbuf(f, logfile_buf, _IOLBF, sizeof(logfile_buf));
+    }
+    return f;
+}
+
+/* Returns true if qemu_log() will really write somewhere.  */
+bool qemu_log_enabled(void)
+{
+    return qemu_log_enabled1;
+}
+
+/* Returns true if qemu_log() will write somewhere else than stderr.  */
+bool qemu_log_separate(void)
+{
+    return qemu_logfile1 != stderr;
+}
 
 /* Return the number of characters emitted.  */
 int qemu_log(const char *fmt, ...)
 {
+    FILE *f = qemu_logfile0();
     int ret = 0;
-    if (qemu_logfile) {
+    if (f != NULL) {
         va_list ap;
         va_start(ap, fmt);
-        ret = vfprintf(qemu_logfile, fmt, ap);
+        ret = vfprintf(f, fmt, ap);
         va_end(ap);
 
         /* Don't pass back error results.  */
@@ -49,8 +93,6 @@ int qemu_log(const char *fmt, ...)
     return ret;
 }
 
-static bool log_uses_own_buffers;
-
 /* enable or disable low levels log */
 void qemu_set_log(int log_flags)
 {
@@ -58,76 +100,25 @@ void qemu_set_log(int log_flags)
 #ifdef CONFIG_TRACE_LOG
     qemu_loglevel |= LOG_TRACE;
 #endif
-    if (!qemu_logfile &&
-        (is_daemonized() ? logfilename != NULL : qemu_loglevel)) {
-        if (logfilename) {
-            qemu_logfile = fopen(logfilename, log_append ? "a" : "w");
-            if (!qemu_logfile) {
-                perror(logfilename);
-                _exit(1);
-            }
-            /* In case we are a daemon redirect stderr to logfile */
-            if (is_daemonized()) {
-                dup2(fileno(qemu_logfile), STDERR_FILENO);
-                fclose(qemu_logfile);
-                /* This will skip closing logfile in qemu_log_close() */
-                qemu_logfile = stderr;
-            }
-        } else {
-            /* Default to stderr if no log file specified */
-            assert(!is_daemonized());
-            qemu_logfile = stderr;
-        }
-        /* must avoid mmap() usage of glibc by setting a buffer "by hand" */
-        if (log_uses_own_buffers) {
-            static char logfile_buf[4096];
-
-            setvbuf(qemu_logfile, logfile_buf, _IOLBF, sizeof(logfile_buf));
-        } else {
-#if defined(_WIN32)
-            /* Win32 doesn't support line-buffering, so use unbuffered output. */
-            setvbuf(qemu_logfile, NULL, _IONBF, 0);
-#else
-            setvbuf(qemu_logfile, NULL, _IOLBF, 0);
-#endif
-            log_append = 1;
-        }
-    }
-    if (qemu_logfile &&
-        (is_daemonized() ? logfilename == NULL : !qemu_loglevel)) {
+    if (qemu_loglevel) {
+        qemu_log_enabled1 = true;
+    } else {
+        qemu_log_enabled1 = false;
         qemu_log_close();
     }
 }
 
-void qemu_log_needs_buffers(void)
-{
-    log_uses_own_buffers = true;
-}
-
-/*
- * Allow the user to include %d in their logfile which will be
- * substituted with the current PID. This is useful for debugging many
- * nested linux-user tasks but will result in lots of logs.
- */
 void qemu_set_log_filename(const char *filename, Error **errp)
 {
-    char *pidstr;
     g_free(logfilename);
+    logfilename = g_strdup(filename);
 
-    pidstr = strstr(filename, "%");
-    if (pidstr) {
-        /* We only accept one %d, no other format strings */
-        if (pidstr[1] != 'd' || strchr(pidstr + 2, '%')) {
-            error_setg(errp, "Bad logfile format: %s", filename);
-            return;
-        } else {
-            logfilename = g_strdup_printf(filename, getpid());
-        }
-    } else {
-        logfilename = g_strdup(filename);
-    }
     qemu_log_close();
     qemu_set_log(qemu_loglevel);
+}
+
+void qemu_log_needs_buffers(void)
+{
 }
 
 /* Returns true if addr is in our debug filter or no filter defined
@@ -221,20 +212,30 @@ out:
     g_strfreev(ranges);
 }
 
+void qemu_log_vprintf(const char *fmt, va_list va)
+{
+    FILE *f = qemu_logfile0();
+    if (f != NULL) {
+        vfprintf(f, fmt, va);
+    }
+}
+
 /* fflush() the log file */
 void qemu_log_flush(void)
 {
-    fflush(qemu_logfile);
+    if (qemu_logfile1) {
+        fflush(qemu_logfile1);
+    }
 }
 
 /* Close the log file */
 void qemu_log_close(void)
 {
-    if (qemu_logfile) {
-        if (qemu_logfile != stderr) {
-            fclose(qemu_logfile);
+    if (qemu_logfile1) {
+        if (qemu_logfile1 != stderr) {
+            fclose(qemu_logfile1);
         }
-        qemu_logfile = NULL;
+        qemu_logfile1 = NULL;
     }
 }
 

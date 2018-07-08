@@ -124,6 +124,7 @@ void fork_start(void)
     start_exclusive();
     mmap_fork_start();
     cpu_list_lock();
+    qemu_log_flush();
 }
 
 void fork_end(int child)
@@ -131,6 +132,8 @@ void fork_end(int child)
     mmap_fork_end(child);
     if (child) {
         CPUState *cpu, *next_cpu;
+        /* Next log even will re-open with the new tid.  */
+        qemu_log_close();
         /* Child processes created by fork() only have a single thread.
            Discard information about the parent threads.  */
         CPU_FOREACH_SAFE(cpu, next_cpu) {
