@@ -256,8 +256,10 @@ extern intptr_t qemu_host_page_mask;
 #define PAGE_WRITE_INV 0x0040
 /* Page mapped with MAP_SHARED, or shmat.  */
 #define PAGE_SHARED    0x0080
+/* For use with page_set_flags: page is being replaced; target_data cleared. */
+#define PAGE_RESET     0x0100
 /* Target-specific bits that will be used via page_get_flags().  */
-#define PAGE_TARGET_1  0x0100
+#define PAGE_TARGET_1  0x0200
 
 #if defined(CONFIG_USER_ONLY)
 void page_dump(FILE *f);
@@ -269,6 +271,8 @@ int walk_memory_regions(void *, walk_memory_regions_fn);
 int page_get_flags(target_ulong address);
 void page_set_flags(target_ulong start, target_ulong end, int flags);
 int page_check_range(target_ulong start, target_ulong len, int flags);
+void *page_get_target_data(target_ulong address);
+void *page_alloc_target_data(target_ulong address, size_t size);
 #endif
 
 CPUArchState *cpu_copy(CPUArchState *env);
