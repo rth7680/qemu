@@ -21,4 +21,8 @@ run-pauth-%: QEMU += -cpu max
 AARCH64_TESTS += bti-1
 bti-1: LDFLAGS += -nostdlib -Wl,-T,$(AARCH64_SRC)/bti.ld
 
+AARCH64_TESTS += mte-1 mte-2
+mte-%: CFLAGS += -O -g
+run-mte-%: QEMU += -cpu max,x-tagged-pages=on
+
 TESTS:=$(AARCH64_TESTS)
