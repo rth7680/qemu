@@ -238,18 +238,26 @@ extern intptr_t qemu_host_page_mask;
 #define PAGE_EXEC      0x0004
 #define PAGE_BITS      (PAGE_READ | PAGE_WRITE | PAGE_EXEC)
 #define PAGE_VALID     0x0008
-/* original state of the write flag (used when tracking self-modifying
-   code */
+/*
+ * Original state of the write flag.  Used to track pages that have
+ * active translation blocks -- usually for self-modifying code.
+ */
 #define PAGE_WRITE_ORG 0x0010
-/* Invalidate the TLB entry immediately, helpful for s390x
- * Low-Address-Protection. Used with PAGE_WRITE in tlb_set_page_with_attrs() */
-#define PAGE_WRITE_INV 0x0040
+/*
+ * FIXME: Code that sets/uses this is broken and needs to go away.
+ */
 #if defined(CONFIG_BSD) && defined(CONFIG_USER_ONLY)
-/* FIXME: Code that sets/uses this is broken and needs to go away.  */
 #define PAGE_RESERVED  0x0020
 #endif
+/*
+ * Invalidate the TLB entry immediately, helpful for s390x
+ * Low-Address-Protection. Used with PAGE_WRITE in tlb_set_page_with_attrs()
+ */
+#define PAGE_WRITE_INV 0x0040
+/* Page mapped with MAP_SHARED, or shmat.  */
+#define PAGE_SHARED    0x0080
 /* Target-specific bits that will be used via page_get_flags().  */
-#define PAGE_TARGET_1  0x0080
+#define PAGE_TARGET_1  0x0100
 
 #if defined(CONFIG_USER_ONLY)
 void page_dump(FILE *f);

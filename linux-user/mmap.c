@@ -626,6 +626,9 @@ abi_long target_mmap(abi_ulong start, abi_ulong len, int target_prot,
         }
     }
  the_end1:
+    if ((flags & MAP_TYPE) == MAP_SHARED) {
+        page_flags |= PAGE_SHARED;
+    }
     page_set_flags(start, start + len, page_flags);
  the_end:
 #ifdef DEBUG_MMAP
