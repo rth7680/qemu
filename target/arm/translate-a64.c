@@ -2763,7 +2763,8 @@ static void disas_ldst_pair(DisasContext *s, uint32_t insn)
         return;
     }
 
-    offset <<= size;
+    // STGP offset is 16-scaled.
+    offset <<= (size + set_tag);
 
     if (rn == 31) {
         gen_check_sp_alignment(s);
