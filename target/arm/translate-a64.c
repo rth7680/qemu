@@ -3611,7 +3611,7 @@ static void disas_ldst_tag(DisasContext *s, uint32_t insn)
     int rt = extract32(insn, 0, 5);
     int rn = extract32(insn, 5, 5);
     uint64_t offset = sextract64(insn, 12, 9) << LOG2_TAG_GRANULE;
-    int op2 = extract32(insn, 10, 3);
+    int op2 = extract32(insn, 10, 2);
     int op1 = extract32(insn, 22, 2);
     bool is_load = false, is_pair = false, is_zero = false, is_mult = false;
     int index = 0;
