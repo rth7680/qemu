@@ -3679,7 +3679,7 @@ static void disas_ldst_tag(DisasContext *s, uint32_t insn)
     }
 
     dirty_addr = read_cpu_reg_sp(s, rn, true);
-    if (index <= 0) {
+    if (index >= 0) {
         /* pre-index or signed offset */
         tcg_gen_addi_i64(dirty_addr, dirty_addr, offset);
     }
@@ -3726,7 +3726,7 @@ static void disas_ldst_tag(DisasContext *s, uint32_t insn)
 
     if (index != 0) {
         /* pre-index or post-index */
-        if (index > 0) {
+        if (index < 0) {
             /* post-index */
             tcg_gen_addi_i64(dirty_addr, dirty_addr, offset);
         }
