@@ -456,8 +456,16 @@ extern unsigned long guest_stack_size;
 #define VERIFY_READ 0
 #define VERIFY_WRITE 1 /* implies read access */
 
+static inline abi_ulong untagged_addr(abi_ulong addr) {
+#if TARGET_ABI_BITS == 64
+    addr &= (((abi_ulong)-1) >> 8);
+#endif
+    return addr;
+}
+
 static inline int access_ok(int type, abi_ulong addr, abi_ulong size)
 {
+    addr = untagged_addr(addr);
     return guest_addr_valid(addr) &&
            (size == 0 || guest_addr_valid(addr + size - 1)) &&
            page_check_range((target_ulong)addr, size,
@@ -601,6 +609,7 @@ static inline void *lock_user(int type, abi_ulong guest_addr, long len, int copy
 {
     if (!access_ok(type, guest_addr, len))
         return NULL;
+    guest_addr = untagged_addr(guest_addr);
 #ifdef DEBUG_REMAP
     {
         void *addr;
@@ -642,7 +651,7 @@ abi_long target_strlen(abi_ulong gaddr);
 static inline void *lock_user_string(abi_ulong guest_addr)
 {
     abi_long len;
-    len = target_strlen(guest_addr);
+    len = target_strlen(untagged_addr(guest_addr));
     if (len < 0)
         return NULL;
     return lock_user(VERIFY_READ, guest_addr, (long)(len + 1), 1);
@@ -650,7 +659,7 @@ static inline void *lock_user_string(abi_ulong guest_addr)
 
 /* Helper macros for locking/unlocking a target struct.  */
 #define lock_user_struct(type, host_ptr, guest_addr, copy)	\
-    (host_ptr = lock_user(type, guest_addr, sizeof(*host_ptr), copy))
+    (host_ptr = lock_user(type, untagged_addr(guest_addr), sizeof(*host_ptr), copy))
 #define unlock_user_struct(host_ptr, guest_addr, copy)		\
     unlock_user(host_ptr, guest_addr, (copy) ? sizeof(*host_ptr) : 0)
 
