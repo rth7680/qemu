@@ -866,6 +866,26 @@ DO_ZPZZ_PAIR(sve2_sminp_zpzz_h, int16_t, H1_2, DO_MIN)
 DO_ZPZZ_PAIR(sve2_sminp_zpzz_s, int32_t, H1_4, DO_MIN)
 DO_ZPZZ_PAIR_D(sve2_sminp_zpzz_d, int64_t, DO_MIN)
 
+DO_ZPZZ_PAIR(sve2_faddp_zpzz_h, float16, H1_2, DO_ADD);
+DO_ZPZZ_PAIR(sve2_faddp_zpzz_s, float32, H1_4, DO_ADD);
+DO_ZPZZ_PAIR_D(sve2_faddp_zpzz_d, float64, DO_ADD);
+
+DO_ZPZZ_PAIR(sve2_fmaxnmp_zpzz_h, float16, H1_2, DO_MAX);
+DO_ZPZZ_PAIR(sve2_fmaxnmp_zpzz_s, float32, H1_4, DO_MAX);
+DO_ZPZZ_PAIR_D(sve2_fmaxnmp_zpzz_d, float64, DO_MAX);
+
+DO_ZPZZ_PAIR(sve2_fminnmp_zpzz_h, float16, H1_2, DO_MIN);
+DO_ZPZZ_PAIR(sve2_fminnmp_zpzz_s, float32, H1_4, DO_MIN);
+DO_ZPZZ_PAIR_D(sve2_fminnmp_zpzz_d, float64, DO_MIN);
+
+DO_ZPZZ_PAIR(sve2_fmaxp_zpzz_h, float16, H1_2, DO_MAX);
+DO_ZPZZ_PAIR(sve2_fmaxp_zpzz_s, float32, H1_4, DO_MAX);
+DO_ZPZZ_PAIR_D(sve2_fmaxp_zpzz_d, float64, DO_MAX);
+
+DO_ZPZZ_PAIR(sve2_fminp_zpzz_h, float16, H1_2, DO_MIN);
+DO_ZPZZ_PAIR(sve2_fminp_zpzz_s, float32, H1_4, DO_MIN);
+DO_ZPZZ_PAIR_D(sve2_fminp_zpzz_d, float64, DO_MIN);
+
 #undef DO_ZPZZ_PAIR
 #undef DO_ZPZZ_PAIR_D
 
