@@ -6387,14 +6387,23 @@ static bool trans_UABA(DisasContext *s, arg_rrr_esz *a)
     return do_sve2_fn3(s, a, arm_gen_gvec_uaba);
 }
 
-#define DO_SVE2_ZPZZ_FP(NAME, name) \
-static bool trans_##NAME(DisasContext *s, arg_rprr_esz *a)                \
-{                                                                         \
-    static gen_helper_gvec_4 * const fns[4] = {                           \
-        NULL,                            gen_helper_sve2_##name##_zpzz_h, \
-        gen_helper_sve2_##name##_zpzz_s, gen_helper_sve2_##name##_zpzz_d, \
-    };                                                                    \
-    return do_sve2_zpzz_ool(s, a, fns[a->esz]);                           \
+static bool do_sve2_zpzz_fp(DisasContext *s, arg_rprr_esz *a,
+                            gen_helper_gvec_4_ptr *fn)
+{
+    if (!dc_isar_feature(aa64_sve2, s)) {
+        return false;
+    }
+    return do_zpzz_fp(s, a, fn);
+}
+
+#define DO_SVE2_ZPZZ_FP(NAME, name)                                         \
+static bool trans_##NAME(DisasContext *s, arg_rprr_esz *a)                  \
+{                                                                           \
+    static gen_helper_gvec_4_ptr * const fns[4] = {                         \
+        NULL,                            gen_helper_sve2_##name##_zpzz_h,   \
+        gen_helper_sve2_##name##_zpzz_s, gen_helper_sve2_##name##_zpzz_d    \
+    };                                                                      \
+    return do_sve2_zpzz_fp(s, a, fns[a->esz]);                              \
 }
 
 DO_SVE2_ZPZZ_FP(FADDP, faddp)
