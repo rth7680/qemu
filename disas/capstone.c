@@ -50,6 +50,33 @@ static const cs_opt_skipdata cap_skipdata_s390x = {
 };
 
 /*
+ * For RISC-V, the capstone library skips 2 bytes when CS_MODE_RISCVC
+ * is set, and 4 bytes when it is not.  But we can tell from the first
+ * several bits the size of the insn and thus stay in sync.
+ */
+static size_t CAPSTONE_API
+cap_skipdata_riscv_cb(const uint8_t *code, size_t code_size,
+                      size_t offset, void *user_data)
+{
+    /*
+     * There are encodings defined for insns up to 22 bytes.
+     * See figure 1.1 in the RISC-V User-level ISA v2.2.
+     * However, the cpus we support only use 2 or 4-byte insns.
+     */
+    uint8_t first = code[offset];
+
+    if ((first & 3) != 3) {
+        return 2;
+    }
+    return 4;
+}
+
+static const cs_opt_skipdata cap_skipdata_riscv = {
+    .mnemonic = ".byte",
+    .callback = cap_skipdata_riscv_cb
+};
+
+/*
  * Initialize the Capstone library.
  *
  * ??? It would be nice to cache this.  We would need one handle for the
@@ -76,6 +103,11 @@ static cs_err cap_disas_start(disassemble_info *info, csh *handle)
     cs_option(*handle, CS_OPT_SKIPDATA, CS_OPT_ON);
 
     switch (info->cap_arch) {
+    case CS_ARCH_RISCV:
+        cs_option(*handle, CS_OPT_SKIPDATA_SETUP,
+                  (uintptr_t)&cap_skipdata_riscv);
+        break;
+
     case CS_ARCH_SYSZ:
         cs_option(*handle, CS_OPT_SKIPDATA_SETUP,
                   (uintptr_t)&cap_skipdata_s390x);
