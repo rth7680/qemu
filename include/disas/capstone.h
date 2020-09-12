@@ -5,6 +5,17 @@
 
 #include <capstone.h>
 
+/*
+ * Capstone does not support these; allow backends to init without ifdefs.
+ * CS_ARCH_* values need to be unique for switches in disas/capstone.c.
+ */
+#if CS_API_MAJOR < 5
+# define CS_ARCH_RISCV    15
+# define CS_MODE_RISCV32  0
+# define CS_MODE_RISCV64  0
+# define CS_MODE_RISCVC   0
+#endif
+
 #else
 
 /* Just enough to allow backends to init without ifdefs.  */
@@ -16,6 +27,7 @@
 #define CS_ARCH_PPC     -1
 #define CS_ARCH_SPARC   -1
 #define CS_ARCH_SYSZ    -1
+#define CS_ARCH_RISCV   -1
 
 #define CS_MODE_LITTLE_ENDIAN    0
 #define CS_MODE_BIG_ENDIAN       0
@@ -33,6 +45,9 @@
 #define CS_MODE_V9               0
 #define CS_MODE_MIPS32           0
 #define CS_MODE_MIPS64           0
+#define CS_MODE_RISCV32          0
+#define CS_MODE_RISCV64          0
+#define CS_MODE_RISCVC           0
 
 #endif /* CONFIG_CAPSTONE */
 #endif /* QEMU_CAPSTONE_H */

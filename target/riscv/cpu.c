@@ -28,6 +28,7 @@
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 #include "fpu/softfloat-helpers.h"
+#include "disas/capstone.h"
 
 /* RISC-V CPU definitions */
 
@@ -329,13 +330,29 @@ static void riscv_cpu_reset(DeviceState *dev)
     set_default_nan_mode(1, &env->fp_status);
 }
 
-static void riscv_cpu_disas_set_info(CPUState *s, disassemble_info *info)
+static void riscv_cpu_disas_set_info(CPUState *cs, disassemble_info *info)
 {
+    RISCVCPU *cpu = RISCV_CPU(cs);
+
+    info->cap_arch = CS_ARCH_RISCV;
 #if defined(TARGET_RISCV32)
     info->print_insn = print_insn_riscv32;
+    info->cap_mode = CS_MODE_RISCV32;
 #elif defined(TARGET_RISCV64)
     info->print_insn = print_insn_riscv64;
+    info->cap_mode = CS_MODE_RISCV64;
+#else
+#error unsupported RISC-V ABI
 #endif
+
+    /* So far we do not support insns larger than 32-bit. */
+    if (riscv_has_ext(&cpu->env, RVC)) {
+        info->cap_insn_unit = 2;
+        info->cap_mode |= CS_MODE_RISCVC;
+    } else {
+        info->cap_insn_unit = 4;
+    }
+    info->cap_insn_split = 4;
 }
 
 static void riscv_cpu_realize(DeviceState *dev, Error **errp)

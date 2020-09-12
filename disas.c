@@ -172,10 +172,14 @@ static void initialize_debug_host(CPUDebug *s)
     s->info.cap_mode = CS_MODE_64;
 # endif
 #elif defined(__riscv) && defined(CONFIG_RISCV_DIS)
+    /* TCG only generates 32-bit instructions. */
+    s->info.cap_arch = CS_ARCH_RISCV;
 #if defined(_ILP32) || (__riscv_xlen == 32)
     s->info.print_insn = print_insn_riscv32;
+    s->info.cap_mode = CS_MODE_RISCV32;
 #elif defined(_LP64)
     s->info.print_insn = print_insn_riscv64;
+    s->info.cap_mode = CS_MODE_RISCV64;
 #else
 #error unsupported RISC-V ABI
 #endif

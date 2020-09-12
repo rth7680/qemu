@@ -670,6 +670,16 @@ if capstone_opt == 'internal'
     )
   endif
 
+  if 'CONFIG_RISCV_DIS' in config_all_disas
+    capstone_data.set('CAPSTONE_HAS_RISCV', '1')
+    capstone_files += files(
+      'capstone/arch/RISCV/RISCVDisassembler.c',
+      'capstone/arch/RISCV/RISCVInstPrinter.c',
+      'capstone/arch/RISCV/RISCVMapping.c',
+      'capstone/arch/RISCV/RISCVModule.c'
+    )
+  endif
+
   if 'CONFIG_S390_DIS' in config_all_disas
     capstone_data.set('CAPSTONE_HAS_SYSZ', '1')
     capstone_files += files(
